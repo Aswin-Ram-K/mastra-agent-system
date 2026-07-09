@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "lastUpdated": "2026-07-09T00:00:00.000Z",
+  "facts": {
+    "systemName": "Mastra Agent System",
+    "initializedAt": "2026-07-09T00:00:00.000Z",
+    "wikiVersion": "0.1.0"
+  },
+  "load-bearing": [
+    {
+      "id": "system-name",
+      "fact": "System name is 'Mastra Agent System'",
+      "source": "wiki/index.md"
+    },
+    {
+      "id": "wiki-version",
+      "fact": "Wiki version is 0.1.0",
+      "source": "wiki/index.md"
+    }
+  ]
+}

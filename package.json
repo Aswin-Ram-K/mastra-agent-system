@@ -1,0 +1,37 @@
+{
+  "name": "mastra-agent-system",
+  "version": "0.1.0",
+  "description": "Mastra + Herdr multi-agent system with PlanDB, Neo4j Agent Memory, and GROOM",
+  "type": "module",
+  "main": "dist/mastra/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node --esm src/mastra/index.ts",
+    "test": "node --import tsx test/test-agent-system.ts",
+    "plan": "plandb init \"mastra-agent-system\"",
+    "wiki:init": "GROOM_CORPUS=wiki node src/herdr/groom-pipeline.mjs init \"Mastra Agent System\"",
+    "wiki:lint": "GROOM_CORPUS=wiki node src/herdr/groom-pipeline.mjs lint",
+    "wiki:prune": "GROOM_CORPUS=wiki node src/herdr/groom-pipeline.mjs prune",
+    "wiki:expand": "GROOM_CORPUS=wiki node src/herdr/groom-pipeline.mjs expand",
+    "wiki:research": "GROOM_CORPUS=wiki node src/herdr/groom-pipeline.mjs research",
+    "wiki:iterate": "GROOM_CORPUS=wiki node src/herdr/groom-pipeline.mjs iterate",
+    "wiki:all": "GROOM_CORPUS=wiki node src/herdr/groom-pipeline.mjs all",
+    "plandb:init": "plandb init \"default\"",
+    "plandb:watch": "plandb watch"
+  },
+  "dependencies": {
+    "@mastra/core": "^1.50.0",
+    "@mastra/libsql": "^1.15.0",
+    "@mastra/mcp": "^1.13.0",
+    "@mastra/memory": "^1.22.0",
+    "@neo4j-labs/agent-memory": "^0.4.0",
+    "graphql": "^16.9.0",
+    "neo4j-driver": "^5.23.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
