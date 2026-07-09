@@ -16,6 +16,10 @@ A stack-agnostic, skill-driven orchestrator system that:
 - The orchestrator uses Mastra's **AgentController** for mode-based session management (plan → research → implement → review → validate), **Signals** for state communication, and **Background Tasks** for non-blocking worker execution
 - Everything speaks through an **OpenAI-compatible endpoint** (vLLM on local network) as the default provider
 
+- **PlanDB** — Task planning graph with atomic claiming, critical path analysis, and BM25 context surfacing
+- **Neo4j Agent Memory** — Relational knowledge graph for entities, relationships, and reasoning traces
+- **GROOM** — Self-maintaining wiki with background maintenance (lint, prune, expand, research, iterate)
+
 ### Key Design Principles
 
 | Principle | Implementation |
@@ -250,7 +254,95 @@ herdr pane report-agent <monitor-pane> \
   --custom-status "memory: 15k/30k obs | 2k/40k ref | 0 gaps"
 ```
 
-### 1.5. Communication Layer
+### 1.6. Knowledge Base Integration Layer
+
+Three complementary knowledge systems give agents planning structure, relational reasoning, and self-maintaining memory:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  KNOWLEDGE BASE LAYER                                                │
+│                                                                      │
+│  ┌──────────────┐  ┌──────────────────┐  ┌──────────────────┐      │
+│  │  PlanDB       │  │  Neo4j Agent     │  │  GROOM Wiki       │      │
+│  │  Task Graph   │  │  Memory          │  │  Self-Maint. KB   │      │
+│  │              │  │                  │  │                  │      │
+│  │ • Tasks      │  │ • Entities       │  │ • Patterns      │      │
+│  │ • Deps       │  │ • Relationships  │  │ • Decisions     │      │
+│  │ • Claiming   │  │ • Reasoning      │  │ • Errors        │      │
+│  │ • Critical   │  │ • Preferences    │  │ • Tools         │      │
+│  │   Path       │  │ • Facts          │  │ • Glossary      │      │
+│  └──────┬───────┘  └────────┬─────────┘  └────────┬─────────┘      │
+│         │                    │                       │               │
+│         ▼                    ▼                       ▼               │
+│  ┌─────────────────────────────────────────────────────────┐        │
+│  │  Workers use ALL three simultaneously:                   │        │
+│  │                                                          │        │
+│  │  1. PlanDB:  "What should I work on?" → claim task       │        │
+│  │  2. Neo4j:  "What do I already know?" → query graph     │        │
+│  │  3. Wiki:   "What have others learned?" → read wiki     │        │
+│  │     AND: "What did I learn?" → contribute to wiki       │        │
+│  └─────────────────────────────────────────────────────────┘        │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### PlanDB — Task Planning Graph
+
+| Feature | Integration | Worker Usage |
+|---------|-------------|--------------|
+| `plandb_add` | Add tasks with deps, kinds, pre/post conditions | Orchestrator creates tasks, Planner decomposes |
+| `plandb_go` | Atomic claiming — only one worker claims per task | All workers claim next available work |
+| `plandb_done` | Complete task + unblock dependencies | Workers signal completion |
+| `plandb_critical_path` | Longest dependency chain analysis | Orchestrator optimizes dispatch order |
+| `plandb_bottlenecks` | Tasks blocking most downstream work | Orchestrator prioritizes blockers |
+| `plandb_context` | BM25-searchable context entries | Workers record discoveries, blockers |
+
+#### Neo4j Agent Memory — Relational Knowledge Graph
+
+| Feature | Integration | Worker Usage |
+|---------|-------------|--------------|
+| Entity extraction | spaCy/GLiNER/LLM pipeline | Researchers extract entities automatically |
+| Relationship extraction | GLiREL pipeline | Workers build entity connections |
+| Entity deduplication | Built-in resolution | No duplicate entities across sessions |
+| Reasoning traces | `:TOUCHED` audit edges | Workers document why decisions were made |
+| Multi-tenant scoping | `user_identifier` per user | Isolated per-user graphs |
+| MCP server | 16 query tools exposed | Any worker queries via MCP |
+
+#### GROOM — Self-Maintaining Wiki
+
+| Feature | Integration | Worker Usage |
+|---------|-------------|--------------|
+| Wiki query | BM25 search across markdown pages | Workers read before/after work |
+| Wiki contribute | Markdown file creation/append | Workers add patterns, decisions, errors |
+| GROOM lint | Fix frontmatter, links, style drift | Monitor triggers on schedule |
+| GROOM prune | Remove duplication, merge overlap | Monitor triggers on schedule |
+| GROOM expand | Web-research what changed | Monitor triggers on schedule |
+| GROOM iterate | Improve weakest page | Monitor triggers on schedule |
+
+#### Knowledge Flow Diagram
+
+```
+  Worker completes task
+        │
+        ├─→ plandb_done → next task unlocked
+        │
+        ├─→ Knowledge Graph:                          
+        │    MemoryClient.long_term.addEntity({       
+        │      name: "AuthController",                
+        │      type: "COMPONENT",                     
+        │      properties: { framework: "Express" }   
+        │    })                                       
+        │
+        ├─→ GROOM Wiki:                               
+        │    wiki_contribute({                        
+        │      topic: "Auth pattern",                 
+        │      content: "Use JWT with refresh tokens"  
+        │    })                                       
+        │
+        └─→ PlanDB context:
+             plandb_context("Remember: JWT + refresh tokens")
+```
+
+### 1.7. Communication Layer
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -861,7 +953,7 @@ mastra-agent-system/
 │   │       └── orchestration.ts  # Master orchestration workflow
 │   │
 │   ├── library/                  # (see §6 above)
-│   │
+│
 │   └── herdr/
 │       ├── layout-presets.json   # All BSP tree layout presets
 │       ├── agent-states.ts       # Herdr ↔ Mastra state bridge
@@ -871,6 +963,14 @@ mastra-agent-system/
 │       ├── om-config.ts          # Shared Observational Memory config factory
 │       ├── extractors.ts         # Role-specific Extractor schemas
 │       └── recall-tools.ts       # Custom recall tool wrappers
+│
+│   ├── wiki/                     # GROOM self-maintaining wiki
+│       ├── index.md
+│       ├── sources.md
+│       ├── glossary.md
+│       ├── _meta/
+│       │   ├── canaries.json
+│       │   └── journal.md
 │
 ├── test/
 │   └── test-agent-system.ts      # End-to-end test script
@@ -984,6 +1084,7 @@ const PROVIDER_CONFIG = {
 | **Step limit** | `maxSteps` per worker agent | Prevent infinite loops |
 | **Background timeout** | Configured `timeoutMs` per worker tool | Prevent hung tasks |
 | **Herdr pane isolation** | Each agent in separate pane | Prevent cross-agent interference |
+| **Wiki canary protection** | GROOM structural + fact validation | Prevent wiki corruption from bad edits |
 
 ---
 
@@ -1000,12 +1101,14 @@ const PROVIDER_CONFIG = {
 | Layout changes | Herdr `layout.updated` event | Orchestrator, Monitor |
 | Token usage | Mastra response.usage | Orchestrator, CostGuard |
 | Memory health (obs/ref tokens) | Herdr pane report-agent | Monitor, User (sidebar) |
+| Wiki status | GROOM cron/status | Monitor, User |
+| Task progress | PlanDB task states | Monitor, User |
 
 ---
 
 ## 13. New Functionalities Added by This Architecture
 
-### 13.1. Observational Memory Integration (New)
+### 14.1. Observational Memory Integration (New)
 
 Mastra's Observational Memory gives every worker long-term memory without manual management:
 
@@ -1020,7 +1123,36 @@ Mastra's Observational Memory gives every worker long-term memory without manual
 - **Working memory auto-mgmt** — Observer manages working memory via state signals, no manual `remember()` calls
 - **OpenAI-compatible** — Uses the same vLLM endpoint as all other agents, not Gemini
 
-### 13.2. AgentController Integration (vs. Hand-Rolled)
+### 13.2. Knowledge Base Integration
+
+Three complementary knowledge systems integrate at the architecture layer:
+
+1. **PlanDB** — Task planning graph
+   - Compound dependency graph (not flat lists)
+   - Atomic multi-agent claiming (no duplicate work)
+   - Critical path analysis (optimizes what to do first)
+   - BM25 context surfacing (discoveries auto-surface with related tasks)
+   - Pre/post conditions (gate task execution on state)
+   - CLI binary — orchestrator uses `plandb` commands
+
+2. **Neo4j Agent Memory** — Relational knowledge graph
+   - 3 layers: conversations → entities/facts → reasoning traces
+   - Entity extraction pipeline (spaCy/GLiNER/LLM)
+   - Relationship extraction (GLiREL)
+   - Entity deduplication across sessions
+   - Multi-tenant scoping (per-user isolation)
+   - MCP server with 16 tools
+   - TypeScript SDK (or Python)
+
+3. **GROOM** — Self-maintaining wiki
+   - Stale-while-revalidate: consulting wiki triggers background refresh
+   - 5 operations: lint, prune, expand, research, iterate
+   - Git checkpointed: every edit is commit → validate → commit, or reset
+   - Canary protection: load-bearing facts guarded by determinstic validators
+   - Content-agnostic: works with any markdown knowledge base
+   - Content-agnostic: zero token validation (free CI test)
+
+### 13.3. AgentController Integration
 
 - **Modes** replace manual phase management: `plan` → `research` → `implement` → `review` → `validate`
 - **Threads** provide persistent state across restarts with mode continuity
@@ -1028,14 +1160,14 @@ Mastra's Observational Memory gives every worker long-term memory without manual
 - **Subagents** handle worker spawning with constrained tool sets
 - **Observational memory** auto-summarizes long sessions
 
-### 13.3. Signals Architecture
+### 13.4. Signals Architecture
 
 - **State signals** (`sendStateSignal`) replace manual output parsing for worker → orchestrator communication
 - **Notification inbox** (`sendNotificationSignal`) for external events (CI, GitHub, Slack)
 - **Reactive signals** from processors for context injection
 - **Conditional attributes** (`ifActive`/`ifIdle`) for smart delivery routing
 
-### 13.4. Background Task Lifecycle
+### 13.5. Background Task Lifecycle
 
 - Workers are background tasks — orchestrator stream never blocks
 - `untilIdle` auto-re-invokes orchestrator when workers complete
@@ -1044,7 +1176,7 @@ Mastra's Observational Memory gives every worker long-term memory without manual
 - **Per-tool timeout** and retry configuration
 - **Manager-level streaming** for all task events
 
-### 13.5. Herdr Layout Presets (BSP Trees)
+### 13.6. Herdr Layout Presets
 
 - **Declarative layouts** saved as JSON trees, applied via `layout.apply()`
 - **Presets per workflow** — each phase (research, implement, review) gets its own layout
