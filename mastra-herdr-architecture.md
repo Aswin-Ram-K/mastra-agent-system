@@ -92,7 +92,165 @@ A stack-agnostic, skill-driven orchestrator system that:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.4. Communication Layer
+### 1.4. Observational Memory Layer
+
+Every agent gets Mastra's **Observational Memory** (OM) — a long-term memory system that automatically compresses conversation history into dense observations, preventing context rot and enabling cross-session continuity.
+
+#### How OM Works (3-Tier System)
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ TIER 1: Recent Messages — exact conversation history             │
+│         (kept for current task, grows until messageTokens threshold) │
+├──────────────────────────────────────────────────────────────────┤
+│ TIER 2: Observations — compressed log of what happened           │
+│         Observer runs at messageTokens threshold (default: 30k)  │
+│         5–40× compression, emoji-prioritized log format          │
+├──────────────────────────────────────────────────────────────────┤
+│ TIER 3: Reflections — condensed patterns from observations       │
+│         Reflector runs when observations hit observationTokens   │
+│         (default: 40k) — garbage collects, combines related items │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+#### Worker Memory Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    PER-AGENT MEMORY ISOLATION                        │
+│                                                                      │
+│  Orchestrator        Researcher        Implementer        Monitor   │
+│  ───────────         ──────────        ───────────        ─────────  │
+│  Thread: main        Thread: main      Thread: main      Thread: mon │
+│  ┌──────────┐        ┌──────────┐      ┌──────────┐      ┌────────┐ │
+│  │Messages  │        │Messages  │      │Messages  │      │Messages│ │
+│  │~25k tok  │        │~25k tok  │      │~25k tok  │      │~25k tok│ │
+│  └────┬─────┘        └────┬─────┘      └────┬─────┘      └───┬────┘ │
+│  ┌───▼─────┐        ┌───▼─────┐      ┌───▼─────┐      ┌───▼────┐ │
+│  │Obs. Log │        │Obs. Log │      │Obs. Log │      │Obs.Log│ │
+│  │10k tok  │        │10k tok  │      │10k tok  │      │10k tok│ │
+│  └────┬────┘        └────┬────┘      └────┬────┘      └───┬────┘ │
+│  ┌───▼─────┐        ┌───▼─────┐      ┌───▼─────┐      ┌───▼────┐ │
+│  │Reflections│     │Reflections│   │Reflections│   │Reflections│ │
+│  │5k tok   │        │5k tok   │      │5k tok   │      │5k tok  │ │
+│  └──────────┘        └──────────┘      └──────────┘      └────────┘ │
+└─────────────────────────────────────────────────────────────────────┘
+  Each thread isolated, no cross-contamination (thread scope)
+```
+
+#### Per-Agent Memory Configuration
+
+```typescript
+// Shared memory factory — one config applied to all agents
+function createAgentMemory(config?: Partial<ObservationalMemoryConfig>) {
+  return new Memory({
+    storage: new LibSQLStore({ url: 'file:./memory.db' }),
+    options: {
+      observationalMemory: {
+        // Model — use OpenAI-compatible endpoint (vLLM)
+        model: 'openai-compatible/vllm-gpt-5-mini',
+        // Thread scope: each agent/thread isolated
+        scope: 'thread',
+
+        // Observer: compresses message history into observations
+        observation: {
+          messageTokens: 30_000,              // trigger at 30k tokens
+          bufferTokens: 0.2,                  // buffer every 20%
+          bufferActivation: 0.8,              // keep 20% history on activation
+          blockAfter: 1.2,                     // safety: force sync at 36k
+          previousObserverTokens: 10_000,     // only 10k prior obs to Observer
+          temporalMarkers: true,              // gap markers for resumed sessions
+          threadTitle: true,                  // auto-generate thread titles
+          bufferOnIdle: true,                 // buffer when agent goes idle
+          activateAfterIdle: 'auto',          // activate before cache expires
+          activateOnProviderChange: true,     // activate when model changes
+          manageWorkingMemory: true,          // auto-manage working memory
+          extraction: [
+            // ── Common extractors for all workers ──
+            new Extractor({
+              name: 'Session context',
+              instructions: 'Extract key context: what is being worked on, current status, blockers.',
+              schema: z.object({
+                currentTask: z.string().optional(),
+                blockers: z.array(z.string()).optional(),
+                progress: z.string().optional(),
+              }),
+            }),
+            new Extractor({
+              name: 'User preferences',
+              instructions: 'Extract user preferences: coding style, tech stack choices, language.',
+              schema: z.object({
+                techStack: z.array(z.string()).optional(),
+                style: z.string().optional(),
+                language: z.string().optional(),
+              }),
+            }),
+          ],
+          retrieval: {
+            vector: true,                     // semantic search enabled
+            scope: 'thread',                  // current thread only
+          },
+        },
+
+        // Reflector: compresses observations into patterns
+        reflection: {
+          observationTokens: 40_000,         // trigger at 40k obs tokens
+          bufferActivation: 0.5,             // start at 50%
+          activateAfterIdle: '5m',           // activate after 5 min idle
+        },
+      },
+    },
+  })
+}
+```
+
+#### Per-Role Memory Customization
+
+While all workers share the base memory config, each role gets **role-specific extractors**:
+
+| Role | Extractors | Purpose |
+|------|-----------|---------|
+| **🟣 Orchestrator** | Session context, dispatch decisions, final state | Remember project scope, workflow decisions, final output format |
+| **🔵 Researcher** | Searched sources, findings, source quality ratings | Remember what was researched, what was found, what was ruled out |
+| **🟡 Planner** | Task decomposition, dependency graphs, strategy notes | Remember plan iterations, approved strategies, discarded approaches |
+| **🔴 Reviewer** | Issues found, severity ratings, review angles applied | Remember review history, common defect patterns, approval criteria |
+| **🟢 Implementer** | Code changes made, test results, iterations attempted | Remember code decisions, failed approaches, working patterns |
+| **🟠 Validator** | Test results, validation criteria, pass/fail summary | Remember test coverage, edge cases tested, known failures |
+| **🔘 Monitor** | Agent states, layout changes, event summary | Remember worker lifecycle events, layout history, anomalies |
+
+#### Memory Behavior Matrix
+
+| Feature | How It Helps Workers | Worker Impact |
+|---------|---------------------|---------------|
+| **Async buffering** | Observer pre-computes in background every 20% of threshold | Workers never pause mid-execution for memory management |
+| **5–40× compression** | Raw messages compressed into dense emoji-prioritized log | Workers carry only relevant context, no context rot |
+| **Temporal gap markers** | Inserts reminder when 10+ min gap between messages | Workers resuming after hours/days know what happened since |
+| **Thread title auto-gen** | Observer suggests title when topic meaningfully changes | Workers stay oriented on multi-topic sessions |
+| **Extractor pipeline** | Custom facts extracted alongside observations | Workers automatically capture project structure, user preferences, coding patterns |
+| **Semantic recall** | Vector search across all past observations | Workers can find past work semantically, not just by keyword |
+| **Working memory auto-mgmt** | Observer manages working memory via state signals | No worker needs to manually "remember" anything |
+| **Early activation** | Activates buffered obs on idle or provider change | Prompt cache stays useful — compressed context sent on next request |
+| **Resource scope** (experimental) | Shared observations across all threads for a user | Enables cross-project learning for a user (opt-in per-agent) |
+
+#### Memory Integration With Herdr
+
+The Herdr integration layer surfaces OM health metrics in the sidebar:
+
+```bash
+# Monitor pane can surface memory health via Herdr events:
+#   - Token usage bars (messages → observation threshold proximity)
+#   - Recent extraction results
+#   - Active observation/reflection status
+
+# Via Herdr pane reporting (Monitors this):
+herdr pane report-agent <monitor-pane> \
+  --source custom:memory-health \
+  --agent memory-monitor \
+  --state working \
+  --custom-status "memory: 15k/30k obs | 2k/40k ref | 0 gaps"
+```
+
+### 1.5. Communication Layer
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -125,7 +283,7 @@ Instead of building a custom orchestrator loop, we use **Mastra's AgentControlle
 | **Subagents** | Worker agents spawned as constrained subagents with specific tool sets |
 | **Tool Approvals** | Human-in-the-loop gating for file writes, deployments, and other risky actions |
 | **Event System** | Typed events (`message_update`, `mode_change`, `tool_approval_required`) drive the UI and Herdr integration |
-| **Observational Memory** | Automatic summarization across threads for long-running sessions |
+| **Observational Memory** | Auto-summarization across threads for long-running sessions — see §1.4 |
 
 ```typescript
 // AgentController configuration
@@ -524,15 +682,15 @@ herdr workspace focus <wid>
 
 ### 4.1. Fixed Base Roles (With Per-Run Customization)
 
-| Role | Base Instructions | Default Tools | Default Model | Herdr Pane |
-|------|-------------------|---------------|---------------|------------|
-| **🟣 Orchestrator** | Coordinate workers, make dispatch decisions, synthesize results | AgentController, Signals, Herdr CLI tools | Strong model (reasoning) | w1:p1 (always present) |
-| **🔵 Researcher** | Gather info, search, analyze sources, build context | Web search, file read, code search | Balanced model | w1:p2 (on demand) |
-| **🟡 Planner** | Decompose tasks, analyze dependencies, create strategy | File tree, code analysis, dependency graph | Balanced model | w1:p3 (on demand) |
-| **🔴 Reviewer** | Review code from multiple angles (correctness, tests, security, performance) | File read, code search, diff analysis | Strong model | w1:p4 (on demand) |
-| **🟢 Implementer** | Write/modify code, run tests, execute scripts | File write, bash execution, tool calling | Balanced model | w1:p5 (on demand) |
-| **🟠 Validator** | Run tests, validate output, check acceptance criteria | Test runner, file read, output validation | Fast model | w1:t2:p1 (on demand) |
-| **🔘 Monitor** | Watch worker states, manage Herdr layout, handle re-routing | Herdr CLI, pane read, agent status | Fast model | w1:t2:p2 (always present) |
+| Role | Base Instructions | Default Tools | Default Model | Herdr Pane | Memory Config |
+|------|-------------------|---------------|---------------|------------|---------------|
+| **🟣 Orchestrator** | Coordinate workers, make dispatch decisions, synthesize results | AgentController, Signals, Herdr CLI tools | Strong model (reasoning) | w1:p1 (always present) | Session context, dispatch decisions |
+| **🔵 Researcher** | Gather info, search, analyze sources, build context | Web search, file read, code search | Balanced model | w1:p2 (on demand) | Searched sources, findings, ratings |
+| **🟡 Planner** | Decompose tasks, analyze dependencies, create strategy | File tree, code analysis, dependency graph | Balanced model | w1:p3 (on demand) | Task decomposition, dependency graphs |
+| **🔴 Reviewer** | Review code from multiple angles (correctness, tests, security, performance) | File read, code search, diff analysis | Strong model | w1:p4 (on demand) | Issues found, severity ratings |
+| **🟢 Implementer** | Write/modify code, run tests, execute scripts | File write, bash execution, tool calling | Balanced model | w1:p5 (on demand) | Code changes, test results, iterations |
+| **🟠 Validator** | Run tests, validate output, check acceptance criteria | Test runner, file read, output validation | Fast model | w1:t2:p1 (on demand) | Test results, validation criteria |
+| **🔘 Monitor** | Watch worker states, manage Herdr layout, handle re-routing | Herdr CLI, pane read, agent status | Fast model | w1:t2:p2 (always present) | Agent states, layout changes, events |
 
 ### 4.2. Per-Run Customization
 
@@ -641,7 +799,22 @@ library/
 ├── protocols/
 │   ├── signal-schema.json        # State/notification signal schemas
 │   ├── approval-policy.json      # Tool approval policies
-│   └── worker-config.json        # Default worker configurations
+│   ├── worker-config.json        # Default worker configurations
+│   └── memory-config.json        # Observational Memory per-role config
+│
+├── memory/
+│   ├── extractors/               # Role-specific Extractor definitions
+│   │   ├── orchestrator-extractor.md
+│   │   ├── researcher-extractor.md
+│   │   ├── planner-extractor.md
+│   │   ├── reviewer-extractor.md
+│   │   ├── implementer-extractor.md
+│   │   ├── validator-extractor.md
+│   │   └── monitor-extractor.md
+│   └── recall-templates/         # Pre-built recall queries per role
+│       ├── code-patterns.md
+│       ├── research-findings.md
+│       └── decision-log.md
 │
 └── auto-discovery/
     ├── scan-skills.sh            # Auto-scan for new skill files
@@ -694,6 +867,11 @@ mastra-agent-system/
 │       ├── agent-states.ts       # Herdr ↔ Mastra state bridge
 │       └── event-subscriber.ts   # Herdr event subscription manager
 │
+│   ├── memory/
+│       ├── om-config.ts          # Shared Observational Memory config factory
+│       ├── extractors.ts         # Role-specific Extractor schemas
+│       └── recall-tools.ts       # Custom recall tool wrappers
+│
 ├── test/
 │   └── test-agent-system.ts      # End-to-end test script
 │
@@ -730,6 +908,9 @@ mastra-agent-system/
                     │  - Worker state signals          │
                     │  - Notification inbox            │
                     │  - Background task results       │
+                    │  - Observational Memory (auto-   │
+                    │    compression, extraction,      │
+                    │    recall)                       │
                     └─────────────┬───────────────────┘
                                   │
                                   ▼
@@ -760,6 +941,7 @@ mastra-agent-system/
 | Orchestrator agent blocks | No events received for N minutes | Monitor sends signal to re-wake or escalate to user |
 | Herdr server crash | Connection lost | Workers continue in background; reconnect restores state via `session.snapshot` |
 | Model provider failure | Processor error | Error processor switches to fallback model |
+| Memory threshold exceeded | Message tokens > `blockAfter × messageTokens` | Observer forced into synchronous mode; may briefly pause agent
 
 ---
 
@@ -817,12 +999,28 @@ const PROVIDER_CONFIG = {
 | Herdr events | Mastra event system via subscriptions | Orchestrator, Monitor |
 | Layout changes | Herdr `layout.updated` event | Orchestrator, Monitor |
 | Token usage | Mastra response.usage | Orchestrator, CostGuard |
+| Memory health (obs/ref tokens) | Herdr pane report-agent | Monitor, User (sidebar) |
 
 ---
 
 ## 13. New Functionalities Added by This Architecture
 
-### 13.1. AgentController Integration (vs. Hand-Rolled)
+### 13.1. Observational Memory Integration (New)
+
+Mastra's Observational Memory gives every worker long-term memory without manual management:
+
+- **Automatic compression** — 5–40× compression of raw messages into dense observations (emoji-prioritized log format)
+- **3-tier system** — Recent messages (exact) → Observations (compressed) → Reflections (patterned)
+- **Async buffering** — Observer runs in background every 20% of threshold; activation is instant, never blocks
+- **Custom extractors** — Each role defines what facts matter (project structure, user preferences, blockers)
+- **Semantic recall** — Vector search across all past observations; workers can look up exact past output
+- **Temporal gap markers** — Workers resume correctly after hours/days of inactivity
+- **Thread-scoped isolation** — Each worker's memory is isolated per thread (no cross-contamination)
+- **Per-role extraction** — Role-specific Extractor schemas capture relevant facts automatically
+- **Working memory auto-mgmt** — Observer manages working memory via state signals, no manual `remember()` calls
+- **OpenAI-compatible** — Uses the same vLLM endpoint as all other agents, not Gemini
+
+### 13.2. AgentController Integration (vs. Hand-Rolled)
 
 - **Modes** replace manual phase management: `plan` → `research` → `implement` → `review` → `validate`
 - **Threads** provide persistent state across restarts with mode continuity
@@ -830,14 +1028,14 @@ const PROVIDER_CONFIG = {
 - **Subagents** handle worker spawning with constrained tool sets
 - **Observational memory** auto-summarizes long sessions
 
-### 13.2. Signals Architecture
+### 13.3. Signals Architecture
 
 - **State signals** (`sendStateSignal`) replace manual output parsing for worker → orchestrator communication
 - **Notification inbox** (`sendNotificationSignal`) for external events (CI, GitHub, Slack)
 - **Reactive signals** from processors for context injection
 - **Conditional attributes** (`ifActive`/`ifIdle`) for smart delivery routing
 
-### 13.3. Background Task Lifecycle
+### 13.4. Background Task Lifecycle
 
 - Workers are background tasks — orchestrator stream never blocks
 - `untilIdle` auto-re-invokes orchestrator when workers complete
@@ -846,7 +1044,7 @@ const PROVIDER_CONFIG = {
 - **Per-tool timeout** and retry configuration
 - **Manager-level streaming** for all task events
 
-### 13.4. Herdr Layout Presets (BSP Trees)
+### 13.5. Herdr Layout Presets (BSP Trees)
 
 - **Declarative layouts** saved as JSON trees, applied via `layout.apply()`
 - **Presets per workflow** — each phase (research, implement, review) gets its own layout
