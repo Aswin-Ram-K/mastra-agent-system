@@ -4731,3 +4731,59 @@ Complete picture of token savings and latency improvements from all optimization
 ---
 
 **END OF ARCHITECTURE DRAFT**
+
+## 35. Optimization Checklist & Migration Guide
+
+Step-by-step guide to implement all optimizations.
+
+### 35.1. Implementation Checklist
+
+**Phase 1: Quick Wins (Do Today — 0 Functionality Lost)**
+- [ ] Replace common MCPs with CLI tools (scripts/mcp-replacements.sh)
+- [ ] Add deterministic task router (scripts/task-router.sh)
+- [ ] Create worker profile definitions (src/mastra/workers/profiles.ts)
+- [ ] Verify CLI tools installed: gh, git, ast-grep, jq, curl, docker
+
+**Phase 2: Medium Complexity (Do This Week)**
+- [ ] Implement shared prefix structure (src/mastra/prefixes/)
+- [ ] Create worker skill files (skills/worker/base.md)
+- [ ] Implement adaptive filter (src/mastra/filter/adaptive.ts)
+- [ ] Implement phase scheduler (src/mastra/phases/scheduler.ts)
+
+**Phase 3: Advanced (Do Next Week)**
+- [ ] Implement cache-aware dispatch (src/mastra/cache/key.ts)
+- [ ] Create fast-mode profile (.mastra/config-fast.yaml)
+- [ ] Implement prompt compression (src/mastra/prompts/compress.ts)
+
+**Phase 4: Validate & Tune (After Implementation)**
+- [ ] Run benchmark suite (scripts/benchmark-tokens.mjs)
+- [ ] Monitor cache hit rates (>60% shared prefix target)
+- [ ] Tune adaptive filter thresholds (<1% false positive target)
+- [ ] Optimize skill file sizes (base.md <500 tokens target)
+
+### 35.2. Migration Commands
+
+```bash
+# 1. Generate optimized configuration
+node scripts/optimize-config.mjs --mode fast --output .mastra/config-fast.yaml
+
+# 2. Apply CLI replacements to MCP config
+node scripts/cli-mcp-migration.mjs --replace --keep-servers github,wikipedia
+
+# 3. Verify functionality unchanged
+node scripts/verify-functionality.mjs --config .mastra/config-fast.yaml --checks all
+
+# 4. Run benchmark
+node scripts/benchmark-tokens.mjs --baseline original.md --optimized optimized.md
+```
+
+### 35.3. Expected Outcomes
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| Avg tokens/task | ~16,000 | ~2,500 | -84% |
+| Avg latency/task | 30-60s | 5-15s | -70% |
+| Error rate | 5% | 2% | -60% (adaptive filter) |
+| Cache hit rate | ~20% | ~65% | +225% |
+| Token cost ($/100 tasks) | ~$50 | ~$8 | -84% |
+

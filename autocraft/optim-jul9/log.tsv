@@ -6,3 +6,4 @@ baseline	327e5fe	lines	3183	0	discard	original architecture: 3183 lines, LM-heav
 5	d5f1ccd	lines	4447	0	keep	§32 MCP→CLI Replacement: 10 replacements, bash implementations, hybrid approach, ~28,500 tokens savings.
 6	63aada3	lines	4600	0	keep	§33 Phase-Scheduled Execution: sequential phases, context handoff, skip rules, 55-67% token reduction.
 7	b105829	lines	4733	0	keep	§34 Optimization Summary: before/after comparison, per-task costs, latency, quality preservation, implementation priority.
+8	b105829	lines	4789	0	keep	§35 Optimization Checklist & Migration: phased implementation, commands, expected outcomes (84% token reduction target).
