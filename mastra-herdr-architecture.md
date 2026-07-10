@@ -1787,6 +1787,162 @@ const GUARDRAILS = {
 };
 ```
 
+
+
+## 20. Testing & Validation Strategy
+
+The system needs rigorous self-testing at multiple levels to ensure reliability. This section defines the testing pyramid.
+
+### 20.1. Testing Pyramid
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                    TESTING PYRAMID                              │
+│                                                                │
+│                          ▲                                     │
+│                         /|\                                    │
+│                        / |\                                    │
+│                       /  |\  Integration Tests (3 agents)     │
+│                      /   |\                                    │
+│                     /    |\                                    │
+│                    /     |\  System Tests (full workflow)      │
+│                   /      |\                                    │
+│                  /       |\                                    │
+│                 /        |\  E2E Tests (user → output)        │
+│                /         |\                                    │
+│               /__________|\                                    │
+│              / Unit Tests │                                    │
+│             /_____________\                                   │
+│                                                                │
+│  Unit: 70%  Integration: 20%  System: 7%  E2E: 3%             │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### 20.2. Unit Tests (Per-Agent)
+
+Each agent role gets unit tests covering its specific responsibilities:
+
+```bash
+# Orchestrator tests
+/test test agents/orchestrator --unit
+
+# Researcher tests
+/test test agents/researcher --unit
+
+# Planner tests
+/test test agents/planner --unit
+
+# Reviewer tests
+/test test agents/reviewer --unit
+
+# Implementer tests
+/test test agents/implementer --unit
+
+# Validator tests
+/test test agents/validator --unit
+
+# Monitor tests
+/test test agents/monitor --unit
+```
+
+| Test Category | What's Tested | Coverage Target |
+|---------------|---------------|----------------|
+| **Agent prompts** | System prompts, instructions, tools | All prompt paths |
+| **Tool calls** | Input/output schema validation | 100% of tools |
+| **Error handling** | Error recovery, fallbacks | 90% of error paths |
+| **Memory** | Observation, extraction, recall | All extractors |
+| **Signals** | State signals, notifications | All signal types |
+| **Handoffs** | Message format, ack/nack | All handoff types |
+
+### 20.3. Integration Tests
+
+```bash
+# Test agent-to-agent communication
+/test test integration handoffs
+
+# Test PlanDB integration
+/test test integration pldb
+
+# Test Neo4j integration
+/test test integration neo4j
+
+# Test GROOM wiki integration
+/test test integration groom
+
+# Test MCP client integration
+/test test integration mcp
+
+# Test Herdr integration
+/test test integration herdr
+
+# Test Observational Memory
+/test test integration memory
+```
+
+| Test Case | Agents Involved | Description |
+|-----------|-----------------|-------------|
+| **Research → Plan** | Researcher → Planner | Handoff with sources |
+| **Plan → Implement** | Planner → Implementer | Handoff with tasks |
+| **Implement → Review** | Implementer → Reviewer | Handoff with diff |
+| **Review → Implement** | Reviewer → Implementer | NACK with issues |
+| **Implement → Validate** | Implementer → Validator | Handoff with test plan |
+| **Multi-agent loop** | Full pipeline | End-to-end workflow |
+
+### 20.4. System Tests
+
+```bash
+# Run a complete workflow simulation
+/test test system --workflow research
+/test test system --workflow implement
+/test test system --workflow review
+
+# Test error recovery
+/test test system --recovery worker-hallucination
+/test test system --recovery context-exhaustion
+/test test system --recovery mcp-down
+/test test system --recovery plandb-corrupt
+
+# Test session persistence
+/test test system --persistence crash-recovery
+/test test system --persistence server-restart
+/test test system --persistence manual-suspend
+
+# Test plugin lifecycle
+/test test system --plugin install-remove
+/test test system --plugin enable-disable
+/test test system --plugin update
+```
+
+### 20.5. Quality Gates
+
+| Gate | Check | Pass Criteria |
+|------|-------|---------------|
+| **Prompt quality** | No open-ended instructions | 100% specific instructions |
+| **Tool safety** | No unsafe file commands | 0 risky tools |
+| **Memory health** | No context rot warnings | 0 gaps, <50% threshold |
+| **Agent efficiency** | Steps per outcome reasonable | < 50 steps per task |
+| **Cost efficiency** | Tokens per outcome tracked | Within 2x expected |
+| **Handoff success** | ACK rate measured | > 95% ACK rate |
+| **Recovery rate** | Auto-recovery succeeds | > 90% auto-recovery |
+
+### 20.6. Testing Commands
+
+```bash
+# Test management
+/test test agents/orchestrator --unit          # Unit test orchestrator
+/test test integration handoffs                # Test handoffs
+/test test system --workflow implement         # Test full workflow
+/test test system --recovery worker-hallucination  # Test recovery
+/test test system --persistence crash          # Test persistence
+/test test benchmarks                          # Run performance benchmarks
+/test test lint                                # Test prompt/tool linting
+/test test --coverage                          # Show coverage report
+/test test --watch                             # Watch mode (re-run on change)
+/test test --report <file>                     # Generate test report
+```
+
+---
+
 ## 21. What This Architecture Gives Us
 
 1. **Full agent visibility** — Every worker in a Herdr pane, state visible in sidebar

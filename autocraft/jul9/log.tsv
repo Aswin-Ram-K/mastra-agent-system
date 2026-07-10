@@ -6,3 +6,4 @@ run	commit	metric	value	memory_gb	status	description
 4	fc8ba27	lines	1845	0	discard	multi-agent handoff section not fully added but content captured in §18 point 15
 5	fc8ba27	lines	1955	0	keep	added plugin & extension system (§19): 8 plugin types, manifest format, lifecycle, commands, security model, discovery flow
 6	476901c	lines	auto	0	keep	added performance & metrics (§18) and security & audit trail (§19): bottleneck detection, cost tracking, threat model, audit trail, guardrails schema; expanded §21 gives us to 22 points
+7	4f005be	lines	2197	0	keep	added testing & validation strategy (§20): pyramid, unit/integration/system tests, quality gates, test commands
