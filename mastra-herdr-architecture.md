@@ -5112,3 +5112,163 @@ JSON. {status:"healthy"|"degraded"|"critical",metrics:{latency_ms:number,token_u
 | Monitor | 1,500 tok | 200 tok | -87% |
 | **TOTAL** | **16,000 tok** | **1,900 tok** | **-88%** |
 
+
+## 38. Configuration Optimization
+
+Optimize Mastra configuration for minimal token usage and maximum performance.
+
+### 38.1. Optimized Mastra Configuration
+
+```yaml
+# .mastra/config.yaml — Optimized for token efficiency
+
+mastra:
+  # Core settings
+  model: {
+    provider: "openai-compatible",
+    name: "gpt-4o-mini",       # Fast, cheap model for most tasks
+    fallback: "gpt-4o",        # Strong model for complex tasks
+    temperature: 0.2,          # Low temp = deterministic output
+    maxTokens: 8000,           # Limit output size
+  }
+
+  # Token management
+  tokens: {
+    maxInput: 50000,           # Hard limit on input tokens
+    maxOutput: 8000,           # Hard limit on output tokens
+    warningThreshold: 0.75,    # Warn at 75% usage
+    compressThreshold: 0.85,   # Auto-compress at 85% usage
+  }
+
+  # Cache settings
+  cache: {
+    enabled: true,             # Enable response caching
+    ttl: 86400000,             # 24h TTL
+    maxSize: 1000,             # Max cached entries
+  }
+
+  # Worker settings
+  workers: {
+    maxSteps: 50,              # Max steps per worker (not unlimited)
+    timeoutMs: 300000,         # 5min timeout per worker call
+    retryLimit: 3,             # Max retries on failure
+  }
+
+  # Signal settings
+  signals: {
+    maxMessageSize: 1000,      # Max signal message size (tokens)
+    maxQueued: 100,            # Max queued signals
+    cleanupInterval: 60000,    # Clean unused signals every 60s
+  }
+
+  # Processors (auto-apply to every call)
+  processors: {
+    input: ["token-limiter", "compress"],  # Compress input
+    output: ["sanitize", "compress"],      # Sanitize + compress output
+    error: ["classify", "fallback"],       # Classify errors + auto-fallback
+  }
+
+  # MCP settings (optimized)
+  mcp: {
+    enabled: true,
+    autoDiscover: true,      # Auto-discover MCPs
+    maxServers: 10,          # Max concurrent MCP servers
+    timeout: 5000,           # 5s timeout per MCP call
+    fallbackToCLI: true,     # CLI fallback if MCP fails
+  }
+
+  # Herdr settings (optimized)
+  herdr: {
+    updateInterval: 1000,    # Update Herdr every 1s (not every ms)
+    batchUpdates: true,      # Batch updates (reduce I/O)
+    compressOutput: true,    # Compress Herdr output
+    maxLogSize: 5000,        # Max log line size (tokens)
+  }
+```
+
+### 38.2. Per-Worker Configuration Override
+
+```yaml
+# Workers can override global config
+workers:
+  implementer:
+    model: "gpt-4o-mini"    # Fast, cheap model
+    maxSteps: 60             # Allow more steps (code generation)
+    timeoutMs: 300000        # 5min
+  
+  reviewer:
+    model: "gpt-4o"         # Stronger model for review
+    maxSteps: 30             # Fewer steps (analysis)
+    timeoutMs: 180000        # 3min
+  
+  validator:
+    model: "gpt-4o-mini"    # Fast model
+    maxSteps: 15             # Few steps (test execution)
+    timeoutMs: 120000        # 2min
+```
+
+### 38.3. Mastra Integration Code Pattern
+
+```typescript
+// src/mastra/index.ts — Optimized Mastra initialization
+import { Mastra } from '@mastra/core';
+import { OpenAI } from '@mastra/core/llm';
+import { createTokenLimiter, createOutputProcessor } from './optimization';
+
+const mastra = new Mastra({
+  // 1. Initialize with optimized model config
+  model: new OpenAI({
+    model: 'gpt-4o-mini',
+    temperature: 0.2,
+    maxTokens: 8000,
+  }),
+  
+  // 2. Apply token limiter to every call
+  tokenLimiter: createTokenLimiter({
+    maxInput: 50000,
+    maxOutput: 8000,
+  }),
+  
+  // 3. Apply output processor to every call
+  outputProcessor: createOutputProcessor({
+    sanitize: true,
+    compress: true,
+  }),
+  
+  // 4. Enable cache with optimized settings
+  cache: {
+    enabled: true,
+    ttl: 86400000,
+    maxSize: 1000,
+  },
+  
+  // 5. Configure workers with optimized prompts
+  workers: {
+    orchestrator: {
+      prompt: loadPrompt('orchestrator'),  // 400 tokens
+      model: 'gpt-4o-mini',
+      maxSteps: 20,
+    },
+    implementer: {
+      prompt: loadPrompt('implementer'),  // 300 tokens
+      model: 'gpt-4o-mini',
+      maxSteps: 60,
+    },
+  },
+});
+
+export default mastra;
+```
+
+### 38.4. Configuration Comparison
+
+| Setting | Default | Optimized | Impact |
+|---------|---------|-----------|--------|
+| Temperature | 0.7 | 0.2 | More deterministic, less token waste |
+| Max output | 16k | 8k | Half the output tokens |
+| Max input | 128k | 50k | Enforced compression |
+| Max steps | 100 | 50 | Less wasted iterations |
+| Cache TTL | 0 (off) | 24h | 100% savings on repeats |
+| Processors | None | input+output+error | 30-50% auto-compression |
+| Timeout | Unlimited | 300s | Prevents token waste on hung calls |
+
