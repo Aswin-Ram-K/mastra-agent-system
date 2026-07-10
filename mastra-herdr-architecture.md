@@ -806,6 +806,245 @@ interface WorkerToolset {
 
 ---
 
+
+
+### 4.3. Detailed Role Specifications
+
+Each worker role has a specific lifecycle, responsibilities, and quality criteria.
+
+#### 🟣 Orchestrator
+
+```typescript
+interface OrchestratorRole {
+  // Primary responsibility
+  role: "orchestrator";
+
+  // Workflow
+  lifecycle: [
+    "receive_task",           // Accept task from user
+    "plan_decompose",         // Break into subtasks (PlanDB)
+    "dispatch_workers",       // Spawn workers with tools
+    "monitor_progress",       // Watch worker states
+    "synthesize_results",     // Combine worker outputs
+    "deliver_response",       // Send final response
+  ];
+
+  // Key decisions to make
+  decisions: [
+    "Which phase to enter?",         // plan | research | implement | review | validate
+    "Which workers to spawn?",       // Based on task type
+    "What tools to give each worker?"// Based on worker role + task context
+    "When to escalate to human?",   // After 3+ retries
+    "What approach to take?",       // Direct answer vs. multi-step workflow
+  ];
+
+  // Output format
+  output: {
+    status: string;                 // working | blocked | done | error
+    phase: string;                  // Current workflow phase
+    tasks: TaskSummary[];           // Task list with status
+    workers: WorkerSummary[];       // Active workers
+    nextAction?: string;            // What to do next
+  };
+}
+```
+
+#### 🔵 Researcher
+
+```typescript
+interface ResearcherRole {
+  role: "researcher";
+
+  // Workflow
+  lifecycle: [
+    "receive_handoff",              // Get task context from orchestrator
+    "identify_sources",             // Determine what to research
+    "execute_research",             // Web search, file read, code analysis
+    "synthesize_findings",          // Combine sources into insights
+    "report_results",               // Send findings back to orchestrator
+  ];
+
+  // Research strategies
+  strategies: [
+    "Code search → AST-aware structural search",
+    "Web search → Find documentation, tutorials, examples",
+    "File read → Understand existing codebase",
+    "MCP query → Use specialized MCP tools",
+  ];
+
+  // Quality criteria
+  quality: {
+    sources: number;                // Min 3 sources
+    confidence: number;             // Min 0.7 confidence
+    coverage: string;               // All aspects of question covered?
+    relevance: string;              // Findings directly address task?
+  };
+}
+```
+
+#### 🟡 Planner
+
+```typescript
+interface PlannerRole {
+  role: "planner";
+
+  // Workflow
+  lifecycle: [
+    "receive_research",             // Get researcher's findings
+    "decompose_task",               // Break into atomic tasks
+    "analyze_dependencies",         // Map task dependencies
+    "prioritize_tasks",             // Critical path analysis
+    "create_strategy",              // Implementation approach
+    "submit_plan",                  // Send plan to orchestrator for approval
+  ];
+
+  // Task decomposition rules
+  rules: [
+    "Each task is atomic (one clear deliverable)",
+    "Tasks have clear dependencies (topologically sorted)",
+    "Tasks are estimated (simple, medium, complex)",
+    "Tasks include pre/post conditions",
+    "Tasks include expected output format",
+  ];
+
+  // Output format
+  output: {
+    tasks: TaskNode[];              // Task graph
+    dependencies: DependencyMap;    // Task → dependencies
+    strategy: string;               // Implementation approach
+    estimated_steps: number;        // Expected total steps
+    risk_factors: string[];         // Potential issues
+  };
+}
+```
+
+#### 🔴 Reviewer
+
+```typescript
+interface ReviewerRole {
+  role: "reviewer";
+
+  // Workflow
+  lifecycle: [
+    "receive_code",                 // Get code changes from implementer
+    "run_review",                   // Multi-angle review
+    "categorize_issues",            // Group and prioritize issues
+    "generate_report",              // Structured review report
+    "send_feedback",                // Send back to implementer or approve
+  ];
+
+  // Review angles
+  angles: [
+    { name: "correctness", priority: "critical" },     // Does it work?
+    { name: "tests", priority: "critical" },           // Are tests adequate?
+    { name: "security", priority: "high" },            // Security vulnerabilities?
+    { name: "performance", priority: "medium" },       // Performance concerns?
+    { name: "readability", priority: "medium" },       // Code quality?
+    { name: "architecture", priority: "medium" },      // Fits project structure?
+    { name: "edge_cases", priority: "high" },          // Edge cases handled?
+  ];
+
+  // Issue severity levels
+  severity: {
+    critical: "Must fix before merge",     // Blocks implementation
+    high: "Should fix soon",               // Significant issue
+    medium: "Nice to fix",                 // Important but not blocking
+    low: "Optional",                       // Minor improvement
+  };
+}
+```
+
+#### 🟢 Implementer
+
+```typescript
+interface ImplementerRole {
+  role: "implementer";
+
+  // Workflow
+  lifecycle: [
+    "receive_task",               // Get task + context from planner
+    "analyze_requirements",       // Understand what needs to be done
+    "plan_implementation",        // Plan approach (briefly)
+    "write_code",                 // Create/modify files
+    "run_tests",                  // Execute relevant tests
+    "self_review",                // Review own changes
+    "report_completion",          // Send to reviewer/validator
+  ];
+
+  // Code quality rules
+  rules: [
+    "Follow existing project style",
+    "Use established patterns",
+    "Add comments for complex logic",
+    "Write/modify tests alongside code",
+    "Never delete untested code without backup",
+    "Log significant decisions in PlanDB context",
+  ];
+
+  // Output format
+  output: {
+    files_changed: FileChange[];  // List of modified files
+    tests_run: string;            // Test commands executed
+    tests_pass: boolean;          // Did tests pass?
+    decisions_made: string;       // Key decisions
+    notes: string;                // Additional notes
+  };
+}
+```
+
+#### 🟠 Validator
+
+```typescript
+interface ValidatorRole {
+  role: "validator";
+
+  // Workflow
+  lifecycle: [
+    "receive_implementation",     // Get implementation from implementer
+    "run_tests",                  // Execute full test suite
+    "check_acceptance",           // Verify acceptance criteria
+    "validate_output",            // Check output format/content
+    "report_results",             // Pass/fail with details
+  ];
+
+  // Validation criteria
+  criteria: {
+    tests_pass: boolean;          // All tests pass?
+    output_matches: boolean;      // Output matches expected format?
+    edge_cases_covered: boolean;  // Edge cases tested?
+    no_regression: boolean;       // Existing tests still pass?
+    performance_acceptable: boolean; // Within performance budget?
+  };
+}
+```
+
+#### 🔘 Monitor
+
+```typescript
+interface MonitorRole {
+  role: "monitor";
+
+  // Workflow
+  lifecycle: [
+    "observe_worker_states",      // Watch all worker panes
+    "detect_anomalies",           // Identify issues
+    "manage_layout",              // Adjust Herdr layout as needed
+    "report_status",              // Send status to orchestrator
+    "trigger_recovery",           // Activate self-healing if needed
+  ];
+
+  // Monitoring checks
+  checks: [
+    { name: "worker_alive", check: "Is pane responding?" },
+    { name: "worker_blocked", check: "Has worker been idle > 2 min?" },
+    { name: "worker_error", check: "Has worker reported an error?" },
+    { name: "memory_pressure", check: "Is memory threshold approaching?" },
+    { name: "layout_valid", check: "Is BSP layout still valid?" },
+    { name: "cost_tracking", check: "Are we within budget?" },
+  ];
+}
+```
+
 ## 5. MCP Integration
 
 ### 5.1. MCP Client (Dynamic Toolsets)

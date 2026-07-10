@@ -8,3 +8,4 @@ run	commit	metric	value	memory_gb	status	description
 6	476901c	lines	auto	0	keep	added performance & metrics (§18) and security & audit trail (§19): bottleneck detection, cost tracking, threat model, audit trail, guardrails schema; expanded §21 gives us to 22 points
 7	4f005be	lines	2197	0	keep	added testing & validation strategy (§20): pyramid, unit/integration/system tests, quality gates, test commands
 8	8287258	lines	2412	0	keep	added configuration system (§21): 5-level hierarchy, YAML config, profiles, secrets, validation
+9	0e7cc79	lines	2651	0	keep	deepened §4 Worker Agent Definitions: role specifications, lifecycle, decisions, quality criteria for all 7 roles
