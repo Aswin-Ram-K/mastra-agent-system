@@ -1943,7 +1943,222 @@ Each agent role gets unit tests covering its specific responsibilities:
 
 ---
 
-## 21. What This Architecture Gives Us
+
+
+## 21. Configuration System
+
+The system uses a layered configuration approach with profiles, defaults, and runtime overrides.
+
+### 20.1. Configuration Hierarchy
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                  CONFIGURATION HIERARCHY                        │
+│                                                                │
+│  Level 1: Built-in Defaults (hardcoded)                       │
+│    ├── agent.model = "gpt-5.5"                                │
+│    ├── agent.maxSteps = 100                                   │
+│    ├── agent.timeoutMs = 300_000                              │
+│    └── ...                                                    │
+│           │                                                    │
+│  Level 2: Config File (.mastra/config.yaml)                   │
+│    ├── overrides defaults                                     │
+│    ├── defines profiles (dev, test, prod)                     │
+│    └── secrets references                                     │
+│           │                                                    │
+│  Level 3: Environment Variables (.env, .env.local)             │
+│    ├── overrides config file                                  │
+│    ├── secrets (API keys, URLs)                               │
+│    └── profile selection (MAISTRA_PROFILE=dev)                │
+│           │                                                    │
+│  Level 4: Runtime Overrides (CLI args, /config commands)       │
+│    ├── /config set agent.model gpt-5.5-mini                  │
+│    ├── /config reset agent.model                              │
+│    └── /config show                                           │
+│           │                                                    │
+│  Level 5: Per-Run Overrides (orchestrator decisions)          │
+│    ├── Worker-specific toolsets                                │
+│    ├── Per-agent model selection                              │
+│    └── Dynamic task-specific config                           │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### 20.2. Configuration File Format
+
+```yaml
+# .mastra/config.yaml
+# ── Global Settings ──────────────────────────────────────────────
+system:
+  name: "mastra-agent-system"
+  version: "0.1.0"
+  profile: dev  # dev | test | prod
+
+# ── Provider Configuration ──────────────────────────────────────
+provider:
+  default: openai-compatible
+  endpoints:
+    openai-compatible:
+      baseUrl: ${OPENAI_COMPATIBLE_BASE_URL:http://localhost:8000/v1}
+      apiKey: ${OPENAI_COMPATIBLE_API_KEY:}
+      models:
+        strong: gpt-5.5
+        balanced: gpt-5.5-mini
+        fast: gpt-5.5-turbo
+
+# ── Agent Settings ──────────────────────────────────────────────
+agents:
+  orchestrator:
+    model: ${AGENT_MODEL:gpt-5.5}  # Falls back to config default
+    maxSteps: 100
+    timeoutMs: 300_000
+    tools: [orchestrator, herdr, signals, plandb, mcp]
+
+  researcher:
+    model: ${AGENT_MODEL_RESEARCHER:gpt-5.5-mini}
+    maxSteps: 50
+    timeoutMs: 300_000
+    tools: [web-search, file-read, code-search, mcp]
+
+  implementer:
+    model: ${AGENT_MODEL_IMPLEMENTER:gpt-5.5-mini}
+    maxSteps: 50
+    timeoutMs: 600_000
+    tools: [file-write, bash, code-search, mcp]
+
+# ── Background Tasks ────────────────────────────────────────────
+background:
+  enabled: true
+  globalConcurrency: 10
+  perAgentConcurrency: 5
+  backpressure: queue
+  defaultTimeoutMs: 300_000
+
+# ── Memory Configuration ────────────────────────────────────────
+memory:
+  storage: libsql
+  storageUrl: file:./memory.db
+  observation:
+    messageTokens: 30_000
+    bufferTokens: 0.2
+    blockAfter: 1.2
+  reflection:
+    observationTokens: 40_000
+
+# ── Plugin Configuration ────────────────────────────────────────
+plugins:
+  registry: klavis
+  autoInstall: false
+  sandboxDefault: true
+  allowedPermissions:
+    - file-read
+    - bash
+    - web-search
+    - file-write
+
+# ── Herdr Configuration ────────────────────────────────────────
+herdr:
+  workspace: default
+  layoutPreset: multi-agent
+  autoRestore: true
+  reportInterval: 5000  # ms
+
+# ── Profiles ─────────────────────────────────────────────────────
+profiles:
+  dev:
+    logLevel: debug
+    costGuard: false
+    testMode: true
+    plugins:
+      autoInstall: true
+
+  test:
+    logLevel: info
+    costGuard: true
+    costLimit: 1.00
+    testMode: true
+
+  prod:
+    logLevel: warn
+    costGuard: true
+    costLimit: 10.00
+    testMode: false
+    plugins:
+      autoInstall: false
+      sandboxDefault: true
+```
+
+### 20.3. Configuration Commands
+
+```bash
+# Configuration management
+/config show [key]                  Show config (full or specific key)
+/config set <key> <value>           Set config value
+/config unset <key>                 Unset config value (use default)
+/config reset                       Reset to defaults
+/config export <file>               Export config to file
+/config import <file>               Import config from file
+
+# Profile management
+/config profile list                List available profiles
+/config profile set <name>          Switch profile
+/config profile export <name>       Export profile
+/config profile import <name> <file> Import profile
+/config profile diff                Show profile differences
+
+# Environment management
+/env list                           List all environment variables
+/env set <key> <value>             Set environment variable
+/env unset <key>                    Unset environment variable
+```
+
+### 20.4. Secrets Management
+
+```bash
+# Secrets are stored separately from config (never in .yaml files)
+/secrets list                       List secret names (not values)
+/secrets set <name> <value>         Set secret value (encrypted)
+/secrets unset <name>               Remove secret
+/secrets rotate <name>              Rotate secret value
+/secrets export <file>              Export secrets (encrypted)
+
+# References in config use ${SECRET_NAME:default} syntax
+# The system resolves secrets at runtime, never in plain text
+```
+
+### 20.5. Configuration Validation
+
+```typescript
+// Config is validated before application
+interface ConfigValidator {
+  // Check required fields
+  validateRequired(config: Config): ValidationError[];
+  
+  // Check value ranges
+  validateRanges(config: Config): ValidationError[];
+  
+  // Check cross-field consistency
+  validateConsistency(config: Config): ValidationError[];
+  
+  // Check security settings
+  validateSecurity(config: Config): ValidationError[];
+  
+  // Generate validation report
+  generateReport(config: Config): ValidationReport;
+}
+
+// Common validation rules:
+const RULES = {
+  agent.maxSteps: { min: 1, max: 500, default: 100 },
+  agent.timeoutMs: { min: 10_000, max: 600_000, default: 300_000 },
+  cost.perSession: { min: 0.10, max: 100.00, default: 10.00 },
+  memory.observation.messageTokens: { min: 10_000, max: 200_000, default: 30_000 },
+  background.concurrency: { min: 1, max: 50, default: 10 },
+};
+```
+
+---
+
+## 22. What This Architecture Gives Us
 
 1. **Full agent visibility** — Every worker in a Herdr pane, state visible in sidebar
 2. **Stack-agnostic** — No hardcoded framework dependencies; tools/MCPs dynamic
@@ -1970,7 +2185,7 @@ Each agent role gets unit tests covering its specific responsibilities:
 
 ---
 
-## 22. Multi-Agent Handoff Protocol
+## 23. Multi-Agent Handoff Protocol
 
 Workers don't just work in isolation — they need to pass context, findings, and state to each other reliably. This section defines the handoff protocol.
 
@@ -2079,7 +2294,7 @@ Status: ✓  ✓  ✓  ✓  ✓
 
 ---
 
-## 23. Plugin & Extension System
+## 24. Plugin & Extension System
 
 Users can extend the system without modifying core code. The plugin system follows a structured lifecycle with security checks.
 
