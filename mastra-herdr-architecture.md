@@ -3178,6 +3178,386 @@ cp -r data/ wiki/ backups/session-$(date +%Y%m%d)/
 | **Log rotation** | Daily (system) | `journalctl --rotate` |
 
 
+## 26. Deterministic Orchestration & Token Optimization
+
+This section details how to optimize the system for speed and token efficiency by replacing LM reasoning with deterministic commands, rule-based routing, and structured patterns.
+
+### 26.1. The Token Cost Problem
+
+| LM Decision | Context Tokens Used | Latency | Deterministic Alternative |
+|-------------|-------------------|---------|--------------------------|
+| Route task type | ~2,000 tokens (task analysis prompt) | 1-3s | CLI-based heuristic router: 0 tokens, <50ms |
+| Select worker tools | ~1,500 tokens (tool catalog prompt) | 1-2s | Profile-based deterministic assignment: 0 tokens, instant |
+| Error → retry/escalate | ~3,000 tokens (error analysis prompt) | 2-4s | LLM-free adaptive filter (SupervisorAgent pattern): 0 tokens, <100ms |
+| Analyze long output | ~5,000 tokens (summarization prompt) | 3-5s | CLI grep/sed/filter pipeline: 0 tokens, <10ms |
+| Choose workflow phase | ~1,000 tokens (phase selection prompt) | 1s | Explicit `/command` state machine: 0 tokens, instant |
+
+### 26.2. Deterministic Task Routing (Replace LM Analysis)
+
+Instead of having the Orchestrator "analyze the task" with an LLM:
+
+```bash
+# DETERMINISTIC: CLI-based task type detection
+# Uses keyword matching + regex — 0 tokens, <50ms
+#!/usr/bin/env bash
+# task-router.sh — Determines task type from user input
+
+TASK_INPUT="$1"
+
+# Priority-ordered pattern matching (most common first)
+case "$TASK_INPUT" in
+  *implement*|*code*|*function*|*api*|*route*|*component*)
+    echo "type=coding; workers=implementer,reviewer,validator" ;;
+  *research*|*document*|*search*|*how*|*why*|*explain*)
+    echo "type=research; workers=researcher" ;;
+  *security*|*vulnerab*|*audit*|*cve*|*pen-test*)
+    echo "type=security; workers=reviewer,implementer; mcp=security-scan" ;;
+  *test*|*verify*|*validat*|*check*|*pass*|*fail*)
+    echo "type=validation; workers=validator" ;;
+  *deploy*|*docker*|*server*|*config*|*setup*|*install*)
+    echo "type=deployment; workers=implementer; mcp=github,filesystem" ;;
+  *review*|*refactor*|*clean*|*format*|*lint*)
+    echo "type=review; workers=reviewer,implementer" ;;
+  *)
+    echo "type=general; workers=researcher,implementer" ;;
+esac
+
+# Output parsed as structured data for pipeline
+TASK_INFO=$(task-router.sh "Implement user auth with JWT")
+# → type=coding; workers=implementer,reviewer,validator; mcp=github,filesystem
+```
+
+**Replace:**
+```
+OLD (LM): "Analyze the task and determine which workers/tools to use" (~2000 tokens, 2-3s)
+NEW (CLI): Pattern-matched task router (0 tokens, <50ms)
+```
+
+### 26.3. Profile-Based Worker Tool Assignment
+
+Instead of the Orchestrator "curating a toolset" for each worker:
+
+```typescript
+// DETERMINISTIC: Pre-defined worker profiles
+// Each profile maps task types → tool/MCP assignments (0 tokens, instant)
+
+interface WorkerProfile {
+  worker: string;
+  // Task-type → tools mapping (deterministic, no LM involved)
+  profiles: Record<string, {
+    tools: string[];
+    mcp?: string[];
+    model?: string;
+    maxSteps: number;
+    timeoutMs: number;
+  }>;
+}
+
+// Profile definitions (loaded once at startup, cached forever)
+const WORKER_PROFILES: WorkerProfile[] = [
+  {
+    worker: "implementer",
+    profiles: {
+      coding: {
+        tools: ["file-write", "bash", "code-search", "read"],
+        mcp: ["filesystem", "github"],
+        model: "fast-code-model",
+        maxSteps: 50,
+        timeoutMs: 300_000,
+      },
+      security: {
+        tools: ["file-write", "bash", "security-audit"],
+        mcp: ["security-scan", "filesystem"],
+        model: "balanced-model",
+        maxSteps: 40,
+        timeoutMs: 300_000,
+      },
+      deployment: {
+        tools: ["bash", "file-write", "read"],
+        mcp: ["github", "filesystem"],
+        model: "balanced-model",
+        maxSteps: 60,
+        timeoutMs: 600_000,
+      },
+    },
+  },
+  {
+    worker: "reviewer",
+    profiles: {
+      default: {
+        tools: ["read", "code-search", "diff", "test-runner"],
+        mcp: ["filesystem"],
+        model: "strong-review-model",
+        maxSteps: 30,
+        timeoutMs: 180_000,
+      },
+      security: {
+        tools: ["read", "code-search", "security-audit", "diff"],
+        mcp: ["security-scan", "filesystem"],
+        model: "strong-review-model",
+        maxSteps: 40,
+        timeoutMs: 240_000,
+      },
+    },
+  },
+  {
+    worker: "researcher",
+    profiles: {
+      default: {
+        tools: ["web-search", "read", "code-search"],
+        mcp: ["wikipedia", "code-explorer"],
+        model: "balanced-model",
+        maxSteps: 30,
+        timeoutMs: 300_000,
+      },
+    },
+  },
+  {
+    worker: "planner",
+    profiles: {
+      default: {
+        tools: ["read", "code-search", "file-tree"],
+        mcp: ["filesystem"],
+        model: "balanced-model",
+        maxSteps: 20,
+        timeoutMs: 180_000,
+      },
+    },
+  },
+  {
+    worker: "validator",
+    profiles: {
+      default: {
+        tools: ["test-runner", "read", "bash"],
+        mcp: ["filesystem"],
+        model: "fast-model",
+        maxSteps: 15,
+        timeoutMs: 120_000,
+      },
+    },
+  },
+];
+
+// Look-up at runtime (deterministic, cached):
+function getWorkerProfile(worker: string, taskType: string): WorkerConfig {
+  const profile = WORKER_PROFILES.find(p => p.worker === worker);
+  if (!profile) throw new Error(`Unknown worker: ${worker}`);
+  return profile.profiles[taskType] || profile.profiles["default"];
+}
+```
+
+**Replace:**
+```
+OLD (LM): "Decide what tools the implementer should use" (~1500 tokens, 1-2s)
+NEW (Lookup): Profile table lookup (0 tokens, <1ms)
+```
+
+### 26.4. LLM-Free Adaptive Filter (SupervisorAgent Pattern)
+
+Replace the LM-based error detection with an LLM-free adaptive filter:
+
+```bash
+#!/usr/bin/env bash
+# adaptive-filter.sh — SupervisorAgent pattern: detect errors/loops/noise without LM
+# Usage: adaptive-filter.sh <type> <data>
+
+TYPE="$1"
+DATA="$2"
+
+case "$TYPE" in
+  error)
+    # Detect error type via regex — 0 tokens
+    if echo "$DATA" | grep -qi "permission denied\|eacces\|not allowed"; then
+      echo "action=fallback; detail=file-read-only-mode"
+    elif echo "$DATA" | grep -qi "timeout\|timed out\|deadline"; then
+      echo "action=retry; detail=reduce-timeout; retry_max=2"
+    elif echo "$DATA" | grep -qi "syntax error\|parse error\|unexpected"; then
+      echo "action=correct; detail=fixed-scope-attention"
+    elif echo "$DATA" | grep -qi "connection refused\|network unreachable"; then
+      echo "action=fallback; detail=use-built-in-tools"
+    elif echo "$DATA" | grep -qi "memory\|quota\|context.*limit\|tokens.*exceeded"; then
+      echo "action=compress; detail=reduce-context; threshold=50%"
+    else
+      echo "action=escalate; detail=human-intervention-required"
+    fi
+    ;;
+  loop)
+    # Detect repetition via hash comparison — 0 tokens
+    HASH=$(echo "$DATA" | md5sum | cut -d' ' -f1)
+    echo "action=break-loop; detail=hash=$HASH; reduce-steps=50%"
+    ;;
+  excessive)
+    # Detect long output — 0 tokens
+    LINE_COUNT=$(echo "$DATA" | wc -l)
+    if [ "$LINE_COUNT" -gt 100 ]; then
+      echo "action=filter; detail=truncate-to-50-lines; keep-header"
+    elif [ "$LINE_COUNT" -gt 50 ]; then
+      echo "action=filter; detail=keep-first-20+last-20-lines"
+    fi
+    ;;
+esac
+```
+
+**Apply in workers via pre-output filtering:**
+```typescript
+// Before any worker sees an MCP/tool output:
+const filtered = await adaptiveFilter.filter(type, output);
+if (filtered.action === "filter") {
+  output = compressToChunks(output, filtered.detail);  // e.g., head -20 + tail -20
+}
+// Worker never sees >50 lines of tool output → 60-80% context reduction
+```
+
+**Replace:**
+```
+OLD (LM): "Analyze this error and decide what to do" (~3000 tokens, 2-4s)
+NEW (Filter): Regex-based adaptive filter (0 tokens, <100ms)
+```
+
+### 26.5. AgentCache-Style Shared Prefixes
+
+Most workers share the same base context (task description, project structure). Share it:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              SHARED CONTEXT PREFIX CACHE                     │
+│                                                               │
+│  Shared across ALL workers (cached once, read many):        │
+│  ├─ Base system prompt (same for all workers)               │
+│  │  ├─ 500 tokens (can be optimized to 200 via skills)      │
+│  │  └─ Cached per-model (5.5-mini: 60% cache hit)           │
+│  ├─ Task description (identical for all workers)            │
+│  │  └─ 300 tokens (shared prefix cache hit)                 │
+│  ├─ Project structure summary (workers may reference it)    │
+│  │  └─ 200 tokens (shared prefix cache hit)                 │
+│  └─ Worker-specific context (varies by worker)              │
+│     └─ 500-1000 tokens (unique per worker)                  │
+│                                                               │
+│  OLD: 7 workers × 3000 tokens = 21,000 tokens (0% shared)   │
+│  NEW: 500 (base) + 300 (task) + 200 (project) +             │
+│       7 × 500 (worker-specific) = 5,500 tokens (74% saved)  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 26.6. CLI Replacement for MCP Tool Bloat
+
+MCP servers inject 15,000+ tokens of tool definitions. Replace common MCPs with CLI tools:
+
+| MCP Server | Tool Def Tokens | Replacement | Token Cost |
+|------------|----------------|-------------|------------|
+| github (MCP) | ~8,000 tokens | `gh` CLI | 0 tokens (system command) |
+| filesystem (MCP) | ~3,000 tokens | Native `cat`/`grep`/`find` | 0 tokens |
+| wikipedia (MCP) | ~2,000 tokens | `curl` to API + CLI parser | 0 tokens |
+| code-explorer (MCP) | ~4,000 tokens | `ast-grep` + `tree-sitter` | 0 tokens |
+
+```bash
+# REPLACEMENT: Direct CLI commands instead of MCP tool calls
+
+# OLD: MCP tool definition injected (~8000 tokens)
+# NEW: Direct system call (0 tokens)
+gh search code "implement authentication" --json 2>/dev/null
+
+# OLD: MCP filesystem tool (~3000 tokens)
+# NEW: Native file commands (0 tokens)
+cat src/auth.ts | head -50
+
+# OLD: MCP wikipedia tool (~2000 tokens)
+# NEW: curl + jq pipeline (0 tokens)
+curl -s "https://en.wikipedia.org/api/rest_v1/page/html/JSON" | grep -o '<h1[^>]*>.*</h1>' | sed 's/<[^>]*>//g'
+
+# OLD: MCP code-explorer tool (~4000 tokens)
+# NEW: ast-grep structural search (0 tokens)
+ast-grep-search --pattern "function $NAME() { $$$BODY }" --lang typescript
+```
+
+### 26.7. Task Type → Command Mapping
+
+Every common task type maps to a deterministic command sequence:
+
+| Task Type | CLI Commands (deterministic) | LM Calls Needed | Tokens Saved |
+|-----------|-----------------------------|-----------------|--------------|
+| Code change | `ast-grep → file-write → bash test` | 1 (implementer prompt) | ~5,000 |
+| Security audit | `grep -r "password" → ast-grep → file-write` | 1 (reviewer prompt) | ~4,000 |
+| Documentation | `head -20 files → write markdown` | 1 (researcher prompt) | ~3,000 |
+| Test add | `head test files → write test → run test` | 1 (implementer prompt) | ~4,500 |
+| Refactor | `ast-grep find → read → write → test` | 1 (implementer prompt) | ~3,500 |
+| Deploy | `bash script → check status` | 0 (pure CLI) | ~6,000 |
+
+### 26.8. Optimization Summary
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    OPTIMIZATION IMPACT                             │
+│                                                                  │
+│  Before (all-LM orchestration):                                  │
+│  • Task routing: ~2,000 tokens                                   │
+│  • Worker selection: ~1,500 tokens                               │
+│  • Tool curation: ~1,500 tokens                                  │
+│  • Error analysis: ~3,000 tokens                                 │
+│  • MCP tool defs: ~15,000 tokens (per-server)                    │
+│  • Shared context: 0% (repeated per worker)                      │
+│  • Total overhead: ~23,000 tokens + 15,000×N MCP                 │
+│                                                                  │
+│  After (deterministic + cached):                                 │
+│  • Task routing: 0 tokens (CLI heuristic)                        │
+│  • Worker selection: 0 tokens (profile lookup)                   │
+│  • Tool curation: 0 tokens (profile lookup)                      │
+│  • Error analysis: 0 tokens (adaptive filter)                    │
+│  • MCP tool defs: 0 tokens (CLI replacement for common ops)      │
+│  • Shared context: 74% saved (AgentCache-style prefix cache)     │
+│  • Total overhead: ~3,000 tokens (worker-specific only)          │
+│                                                                  │
+│  SAVINGS: ~85% token reduction on orchestration overhead         │
+│  SPEED: ~90% faster routing (CLI: <50ms vs LM: 2-3s)             │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 27. Implementation Priority & Migration Path
+
+### 27.1. Quick Wins (Immediate, 0-Functionality-Lost)
+
+| Change | Tokens Saved | Effort |
+|--------|-------------|--------|
+| CLI replacement for MCP (common ops) | 15,000+/server | Low |
+| Deterministic task router script | 2,000 per-task | Low |
+| Profile-based tool assignment | 1,500 per-task | Low |
+| Shared prefix context cache | 70% of base context | Medium |
+
+### 27.2. Medium Complexity
+
+| Change | Tokens Saved | Effort |
+|--------|-------------|--------|
+| Adaptive filter (LLM-free error detection) | 3,000 per error | Medium |
+| Task-type command sequences | 3,000-6,000 per task | Medium |
+| MCP → AST-Grep replacement | 4,000/server | Medium |
+
+### 27.3. Advanced
+
+| Change | Tokens Saved | Effort |
+|--------|-------------|--------|
+| Prompt compression (worker-specific) | 500-1,000 per worker | High |
+| Phase-scheduled execution | 20-30% overall | High |
+| Custom skill prompts (role-specific) | 1,000-2,000 per worker | High |
+
+### 27.4. Migration Commands
+
+```bash
+# 1. Generate optimized architecture
+node scripts/optimize-architecture.mjs --in mastra-herdr-architecture.md --out optimized.md
+
+# 2. Benchmark before/after
+node scripts/benchmark-tokens.mjs --baseline original.md --optimized optimized.md
+
+# 3. Deploy optimized version
+cp optimized.md mastra-herdr-architecture.md
+
+# 4. Verify functionality unchanged
+node scripts/verify-functionality.mjs --config optimized.md --checks all
+```
+
+
 ---
 
 **END OF ARCHITECTURE DRAFT**
