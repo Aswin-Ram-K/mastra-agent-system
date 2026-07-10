@@ -1582,7 +1582,212 @@ interface SessionSnapshot {
 
 ---
 
-## 18. What This Architecture Gives Us
+## 18. Performance & Metrics Monitoring
+
+The system needs real-time visibility into performance bottlenecks, costs, and agent health. This section defines the metrics layer.
+
+### 18.1. Core Metrics Categories
+
+| Category | Metrics | Purpose |
+|----------|---------|--------|
+| **Performance** | Latency, throughput, queue depth, timeout rate | Detect bottlenecks |
+| **Cost** | Token usage, API calls, cost per phase | Budget management |
+| **Quality** | Retry rate, failure rate, approval rate, handoff success | Detect patterns |
+| **Resource** | Memory usage, context size, worker concurrency | Capacity planning |
+| **Agent** | Steps taken, tokens per step, idle time | Agent efficiency |
+
+### 18.2. Metrics Collection
+
+```typescript
+interface MetricsCollector {
+  recordTokenUsage(agent: string, phase: string, tokens: number): void;
+  recordDuration(agent: string, phase: string, durationMs: number): void;
+  recordOutcome(agent: string, operation: string, success: boolean): void;
+  recordToolUsage(agent: string, tool: string, latencyMs: number): void;
+  recordHandoff(from: string, to: string, success: boolean): void;
+  recordMemoryHealth(agent: string, metrics: {
+    messageTokens: number;
+    observationTokens: number;
+    reflectionTokens: number;
+    gapCount: number;
+  }): void;
+  getMetrics(): AgentMetrics[];
+  getSummary(): PerformanceSummary;
+}
+```
+
+### 18.3. Performance Dashboard (Herdr)
+
+```bash
+# ── Performance Dashboard ─────────────────────────────────
+# [2024-01-15 14:30:00] Session: 2m 15s | Tokens: 45k/300k | Cost: $0.03
+#
+# ┌──────────────┬────────┬────────┬────────┬────────┐
+# │ Agent        │ Status │ Steps  │ Tokens │ Latency│
+# ├──────────────┼────────┼────────┼────────┼────────┤
+# │ orchestrator │ working│ 12     │ 15,234 │ 2.3s   │
+# │ researcher   │ done   │ 8      │ 8,456  │ 1.8s   │
+# │ planner      │ done   │ 5      │ 6,789  │ 1.2s   │
+# │ implementer  │ working│ 3      │ 4,567  │ 3.1s   │
+# │ reviewer     │ idle   │ 0      │ 0      │ -      │
+# │ validator    │ idle   │ 0      │ 0      │ -      │
+# └──────────────┴────────┴────────┴────────┴────────┘
+#
+# ── Bottleneck Detection ──────────────────────────────────
+# ⚠️ implementer: High latency (3.1s avg, 1.8s threshold)
+#    → Possible: Large context, complex tool calls
+#
+# ── Cost Tracking ─────────────────────────────────────────
+# Model         | Tokens   | Cost     | % of Total
+# gpt-5.5       | 32,456   | $0.022   | 73%
+# gpt-5.5-mini  | 12,544   | $0.008   | 27%
+# ─ Total: $0.030 ──────────────────────────────────────────
+```
+
+### 18.4. Bottleneck Detection Rules
+
+| Rule | Condition | Action |
+|------|-----------|--------|
+| **High latency** | Agent latency > 2x baseline | Log warning, suggest context reduction |
+| **Token spike** | Agent uses > 3x avg tokens/step | Log alert, suggest tool optimization |
+| **Retry storm** | Same agent retries > 3x in 5 min | Log error, suggest prompt improvement |
+| **Idle agent** | Agent idle > 2 min after task assigned | Check if blocked, suggest intervention |
+| **Queue build-up** | > 5 tasks waiting in PlanDB | Log warning, suggest parallel execution |
+| **Memory pressure** | > 80% of observation threshold | Log warning, suggest context reduction |
+| **Cost anomaly** | Cost > 3x expected for phase | Log alert, suggest approach change |
+| **Handoff failure** | Handoff nack > 2x in 5 min | Log error, suggest protocol fix |
+
+### 18.5. Optimization Commands
+
+```bash
+/perf report                  Show full performance report
+/perf bottleneck              Show detected bottlenecks
+/perf tokens <agent>          Show token usage for agent
+/perf cost <agent>            Show cost for agent
+/perf latency <agent>         Show latency stats
+/perf optimize <agent>        Suggest optimizations
+/perf set <metric> <value>    Adjust performance threshold
+/perf reset <metric>          Reset to defaults
+/perf export <file>           Export metrics as JSON
+/perf compare <id>            Compare with previous session
+```
+
+## 19. Security & Audit Trail
+
+### 19.1. Threat Model
+
+| Threat | Vector | Mitigation |
+|--------|--------|-----------|
+| **Prompt injection** | User input → agent system prompt | PromptInjectionDetector processor |
+| **PII leakage** | Output → terminal/pane | PIIDetector processor on outputs |
+| **Unauthorized file access** | Worker tool → filesystem | Sandboxed file access, read-only by default |
+| **Unauthorized command execution** | Worker tool → bash | Command allowlist, sandbox, timeout |
+| **Plugin tampering** | Plugin install → system | Hash verification, sandbox, permissions |
+| **Knowledge graph poisoning** | Wiki/graph → all workers | GROOM canary validation, audit trail |
+| **Cross-agent data leakage** | Agent A → Agent B | Thread-scoped memory, no cross-thread |
+| **Cost abuse** | Infinite loop → tokens/minutes | Token limiter, cost guard, step limits |
+| **Session hijacking** | Terminal access | Herdr workspace isolation, auth |
+
+### 19.2. Audit Trail System
+
+```typescript
+interface AuditEntry {
+  id: string;                    // UUID
+  timestamp: string;             // ISO 8601
+  agent: string;                 // Who performed the action
+  action: string;                // What was done
+  target: string;                // What was affected
+  result: 'success' | 'failure' | 'blocked';
+  details: object;               // Additional context
+  cost?: { tokens: number; cost: number; };
+}
+
+// Audit categories (always logged):
+const AUDIT_CATEGORIES = {
+  tool_call: 'Tool execution by worker',
+  file_write: 'File modification by implementer',
+  command_run: 'Shell command execution',
+  handoff: 'Agent-to-agent context transfer',
+  approval: 'Human approval/denial',
+  plugin_install: 'Plugin installation/upgrade',
+  plugin_disable: 'Plugin deactivation',
+  error_recovery: 'Self-healing trigger',
+  memory_flush: 'Context compression',
+  layout_change: 'Workspace layout modification',
+};
+```
+
+### 19.3. Audit Log Format
+
+```bash
+# ── Audit Log (real-time feed to monitor pane) ────────────
+# [2024-01-15 14:32:01] [IMPLEMENTER] tool:file-write → result:success
+# [2024-01-15 14:32:02] [REVIEWER] handoff → implementer | result:success
+# [2024-01-15 14:32:05] [USER] approval:approve | action:auth.ts | result:yes
+# [2024-01-15 14:32:10] [MONITOR] recovery:error-retry | worker:implementer | result:success
+# [2024-01-15 14:32:15] [PLUGIN] install | id:security-audit | source:registry | result:success
+# [2024-01-15 14:32:20] [ORCHESTRATOR] layout_change | preset:multi-agent | result:applied
+```
+
+### 19.4. Security Commands
+
+```bash
+/security report              Show security posture report
+/security audit               Show audit trail
+/security check               Run security scan on current state
+/security enable-audit        Enable audit logging
+/security disable-audit       Disable audit logging (not recommended)
+/security export-audit <file> Export audit trail as JSON
+/security whitelist <command> Add command to allowlist
+/security blacklist <command> Remove command from allowlist
+```
+
+### 19.5. Token & Cost Guardrails
+
+```typescript
+const GUARDRAILS = {
+  // Per-agent token limits
+  agent: {
+    orchestrator: { messageTokens: 120_000, observationTokens: 40_000, blockAfter: 144_000 },
+    researcher: { messageTokens: 80_000, observationTokens: 30_000, blockAfter: 96_000 },
+    implementer: { messageTokens: 80_000, observationTokens: 30_000, blockAfter: 96_000 },
+    reviewer: { messageTokens: 80_000, observationTokens: 30_000, blockAfter: 96_000 },
+    validator: { messageTokens: 40_000, observationTokens: 15_000, blockAfter: 48_000 },
+    monitor: { messageTokens: 20_000, observationTokens: 10_000, blockAfter: 24_000 },
+  },
+
+  // Cost limits
+  cost: {
+    perAgent: 0.50,              // Max $0.50 per agent
+    perSession: 10.00,           // Max $10.00 per session
+    perPhase: 2.00,              // Max $2.00 per phase
+    alertThreshold: 0.75,        // Alert at 75% of limit
+    blockThreshold: 1.0,         // Block at 100% of limit
+  },
+
+  // Step limits
+  steps: {
+    orchestrator: 100,
+    researcher: 50,
+    planner: 30,
+    implementer: 50,
+    reviewer: 30,
+    validator: 20,
+    monitor: 10,
+  },
+
+  // Timeout limits
+  timeouts: {
+    default: 300_000,            // 5 minutes
+    implementer: 600_000,        // 10 minutes (complex code)
+    researcher: 300_000,         // 5 minutes
+    reviewer: 180_000,           // 3 minutes
+    validator: 120_000,          // 2 minutes
+  },
+};
+```
+
+## 21. What This Architecture Gives Us
 
 1. **Full agent visibility** — Every worker in a Herdr pane, state visible in sidebar
 2. **Stack-agnostic** — No hardcoded framework dependencies; tools/MCPs dynamic
@@ -1600,10 +1805,16 @@ interface SessionSnapshot {
 14. **Self-healing** — Auto-detection, escalation chain, fallback degradation, learning from failures
 15. **Reliable handoffs** — Structured context transfer, chain of custody, ack/nack protocol
 16. **Plugin extensibility** — Custom tools, skills, workers, processors with security model
+17. **Performance monitoring** — Real-time dashboards, bottleneck detection, cost tracking
+18. **Security & audit** — Threat model, audit trail, token/cost guardrails, allowlists
+19. **Terminal-native UX** — `/run`, `/tasks`, `/approve`, `/session`, `/heal`, `/plugin` commands
+20. **Self-healing** — Auto-detection, 3 recovery protocols, 4-level escalation chain
+21. **Multi-agent handoffs** — Structured context transfer, ack/nack, chain of custody
+22. **Session persistence** — 8-level state storage, auto-save triggers, 4 recovery scenarios
 
 ---
 
-## 19. Multi-Agent Handoff Protocol
+## 22. Multi-Agent Handoff Protocol
 
 Workers don't just work in isolation — they need to pass context, findings, and state to each other reliably. This section defines the handoff protocol.
 
@@ -1712,7 +1923,7 @@ Status: ✓  ✓  ✓  ✓  ✓
 
 ---
 
-## 20. Plugin & Extension System
+## 23. Plugin & Extension System
 
 Users can extend the system without modifying core code. The plugin system follows a structured lifecycle with security checks.
 
