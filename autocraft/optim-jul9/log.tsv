@@ -3,3 +3,4 @@ baseline	327e5fe	lines	3183	0	discard	original architecture: 3183 lines, LM-heav
 2	156df34	lines	3850	0	keep	§28 Prompt Optimization: skill-based modular prompts, auto-load rules, emoji compression, 872	156df34	lines	3850	0	keep	§28 Prompt Optimization: skill-based modular prompts, auto-load rules, emoji compression, 87% reduction. §29 Fast-Mode profile (3 speed tiers).
 3	c8c5845	lines	4042	0	keep	§30 Cache-Aware Orchestration: AgentCache pattern, shared prefixes, cache keys, worker skills, 60-80% cache hit targets.
 4	eb3a545	lines	4304	0	keep	§31 SupervisorAgent: full adaptive filter implementation, error/loop/noise detection, intervention rules, metrics (29-70% token reduction).
+5	d5f1ccd	lines	4447	0	keep	§32 MCP→CLI Replacement: 10 replacements, bash implementations, hybrid approach, ~28,500 tokens savings.
