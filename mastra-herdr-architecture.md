@@ -1186,7 +1186,403 @@ Three complementary knowledge systems integrate at the architecture layer:
 
 ---
 
-## 14. What This Architecture Gives Us
+## 15. Human-Agent Interaction Protocol (Terminal-Native UI/UX)
+
+### 15.1. Command Syntax
+
+All user interactions use a structured `/command` syntax that is:
+
+- Parseable by both humans and machines
+- Consistent across all agent responses
+- Terminal-width-adaptive (wraps to fit the terminal width)
+
+```bash
+# Run a new task
+/run <task_description>
+
+# View current tasks
+/tasks list
+/tasks status <task_id>
+/tasks cancel <task_id>
+
+# Session management
+/session start <name>
+/session resume <id>
+/session snapshot
+/session restore <snapshot_id>
+
+# Approval flows (for human-in-the-loop)
+/approve <action_id> yes|no|modify
+/approve list
+/approve deny <action_id>
+
+# Worker management
+/worker list
+/worker focus <worker_id>
+/worker send <worker_id> <message>
+/worker stop <worker_id>
+
+# Monitoring
+/monitor status
+/monitor logs <worker_id>
+/monitor metrics
+
+# Plugin management
+/plugin install <id|url>
+/plugin list
+/plugin disable <id>
+/plugin enable <id>
+
+# Error recovery
+/heal trigger
+/heal status
+/heal history
+
+# Plugin & Extension System
+/plugin install <id|url>      Install from registry/URL
+/plugin install local <path>  Install from local path
+/plugin update [id]           Update one or all plugins
+/plugin uninstall <id>        Remove plugin
+/plugin enable <id>           Enable plugin
+/plugin disable <id>          Disable plugin
+/plugin list                  List all plugins
+/plugin info <id>             Show plugin details
+/plugin search <query>        Search registry
+/plugin verify <id>           Verify plugin integrity
+/plugin categories            List available categories
+/plugin export <id>           Export plugin as package
+/plugin import <file>         Import plugin from file
+/plugin health                Show plugin health status
+/plugin logs <id>             Show plugin logs
+```
+
+### 15.2. Structured Agent Responses
+
+All agent responses follow a consistent format:
+
+```markdown
+[AGENT:orchestrator] [STATUS:working] [PHASE:implement]
+
+> Task: Implement user authentication
+> Progress: 2/5 tasks complete
+
+📋 Current work:
+  ✅ Task 1: Create auth controller
+  ✅ Task 2: Set up JWT middleware  
+  🔄 Task 3: Add refresh token handler
+  ⬜ Task 4: Add logout endpoint
+  ⬜ Task 5: Add integration tests
+
+⚠️ Blocks: None
+🔧 Tools active: file-write, bash, code-search
+
+---
+[END AGENT:orchestrator]
+```
+
+### 15.3. Human-in-the-Loop Approval Gating
+
+```bash
+# Orchestrator detects a file-write needs approval
+# → Sends notification signal to user
+# → User sees: "Worker implementer wants to modify auth.ts. Approve?"
+# → User responds: /approve <action_id> yes|no|modify <instructions>
+
+# If modify:
+# The orchestrator re-injects user's instructions to the implementer
+# Implementation continues with user's modifications
+```
+
+### 15.4. Live Streaming Updates
+
+- **Herdr sidebar** shows real-time agent states (idle/working/blocked/done)
+- **Worker panes** stream LLM output directly (token-by-token visible)
+- **Monitor pane** shows consolidated status, errors, memory health
+- **Orchestrator pane** shows current phase, task list, dispatch decisions
+- **Terminal keyboard shortcuts** allow interrupting, focusing, or zooming any worker
+
+### 15.5. Terminal-Width Adaptive Rendering
+
+```bash
+# Agent output automatically adapts to terminal width
+# Narrow terminal (80 cols):      [worker] status: working, task: file-write, progress: 40%
+# Wide terminal (160+ cols):      [worker] 🟢 implementer (w1:p3) | status: working | task: file-write | progress: 40% | elapsed: 2m 15s
+
+# Orchestrator uses width-detection to format output
+const terminalWidth = process.stdout.columns || 80;
+const format = terminalWidth > 120 ? 'full' : 'compact';
+```
+
+---
+
+## 16. Session Persistence & Recovery
+
+### 16.1. Multi-Level State Storage
+
+```typescript
+// 8 levels of persistence from ephemeral to durable:
+
+interface SessionSnapshot {
+  // Level 1: Current task (ephemeral, volatile)
+  currentTask: string;
+  currentPhase: string;  // plan | research | implement | review | validate
+  currentWorkers: WorkerState[];
+
+  // Level 2: Mastra thread state (auto-saved per turn)
+  mastraThread: {
+    id: string;
+    messages: AIMessage[];  // Last 50 messages (auto-compressed)
+    mode: string;
+    agentStates: Record<string, WorkerState>;
+  };
+
+  // Level 3: Background task state (auto-saved on completion)
+  backgroundTasks: BackgroundTaskState[];
+
+  // Level 4: PlanDB task graph (saved on every task state change)
+  planDB: {
+    tasks: TaskNode[];
+    claimStates: Map<string, string>;  // taskId → workerId
+  };
+
+  // Level 5: Neo4j knowledge graph (buffered writes, 30s flush)
+  knowledgeGraph: {
+    entities: Entity[];
+    relationships: Relationship[];
+    reasoningTraces: ReasoningTrace[];
+  };
+
+  // Level 6: Wiki state (git checkpointed per write)
+  wiki: {
+    pages: WikiPage[];
+    lastCommit: string;
+    dirty: boolean;
+  };
+
+  // Level 7: Herdr workspace state (snapshot on save)
+  herdrWorkspace: {
+    workspaceId: string;
+    layout: BSPNode;
+    paneStates: Record<string, PaneState>;
+  };
+
+  // Level 8: Plugin state (persistent on disk)
+  plugins: PluginState[];
+}
+```
+
+### 16.2. Auto-Save Triggers
+
+| Trigger | What Gets Saved | Frequency |
+|---------|----------------|-----------|
+| **Every turn** | Thread messages, agent states | Instant (auto) |
+| **Task complete** | PlanDB task state, task result | Instant |
+| **Task state change** | PlanDB claim, done, context | Instant |
+| **Memory threshold** | Observations, reflections | Every 30k tokens |
+| **Every 5 minutes** | Herdr layout, plugin state | Poll |
+| **Wiki write** | Page content, git commit | On-write |
+| **Session end** | Full snapshot (all levels) | On-demand |
+| **Crash** | Last known state (OS signals) | On-signal |
+
+### 16.3. Recovery Scenarios
+
+```bash
+# Scenario 1: Process crash
+# → Herdr detects pane exit
+# → Monitor spawns fresh workers
+# → Workers reconnect to Mastra thread
+# → Thread state restored from storage
+# → Workers resume from last checkpoint
+
+# Scenario 2: Network disconnect (user leaves terminal)
+# → Workers continue running (background tasks)
+# → On reconnect, user sees all worker panes with last state
+# → /session snapshot saves current state
+# → /session restore loads latest snapshot
+
+# Scenario 3: Server restart (all panes killed)
+# → On restart, orchestrator reads:
+#   - Herdr workspace snapshot (workspace ID)
+#   - PlanDB task graph
+#   - Mastra thread state
+# → Re-spawns all workers from task graph
+# → Workers resume from their last checkpoint
+
+# Scenario 4: Manual suspend
+# → /session save <name>
+# → All workers paused
+# → Full state persisted
+# → /session resume <name> restores everything
+```
+
+### 16.4. Session Commands
+
+```bash
+# Save current session state
+/session save <name>               # Named snapshot
+/session save --auto               # Auto-save on completion
+
+# Restore a session
+/session restore <name|id>         # Restore by name or ID
+/session restore latest            # Restore most recent snapshot
+
+# List saved sessions
+/session list                      # Show all saved snapshots
+/session info <id>                 # Show snapshot details
+
+# Session lifecycle
+/session start <name>              # Start new session
+/session end                       # End current session (auto-save)
+/session compact                   # Compress thread, free tokens
+/session export <name>             # Export full session as JSON
+/session import <file>             # Import session from JSON
+```
+
+---
+
+## 17. Error Recovery & Self-Healing
+
+### 17.1. Failure Categories & Response Matrix
+
+| Failure | Detection | Auto-Recovery | Human Intervention |
+|---------|-----------|---------------|-------------------|
+| **Worker hallucination** | Validator fails + pattern match | Retry with stricter prompt | Escalate if 3+ retries fail |
+| **Infinite loop** | Step counter + token budget | Kill worker, reduce steps | Manual review if 5+ loops |
+| **Bad code change** | Test failure + diff analysis | Revert + try alternative approach | Show diff if user asks |
+| **Resource exhaustion** | Token limit + memory monitor | Flush memory, reduce context | Alert if persistent |
+| **MCP server down** | Connection error + timeout | Fallback to built-in tools | Retry after timeout period |
+| **PlanDB corruption** | SQLite integrity check | Rebuild from PlanDB context | Manual restore from backup |
+| **Knowledge graph inconsistency** | Circular dependency detection | Break cycle, log warning | Human decides which to keep |
+| **Wiki corruption** | GROOM canary validation | Auto-revert last wiki change | Alert if 3+ corruptions |
+| **Layout drift** | BSP tree validation | Auto-restore layout preset | Log warning only |
+
+### 17.2. Auto-Recovery Protocols
+
+**Protocol 1: Worker Retry (Transient Errors)**
+
+```
+1. Worker fails → validator detects issue
+2. Orchestrator analyzes failure pattern:
+   a. Hallucination → Re-try with stricter system prompt
+   b. Infinite loop → Re-try with reduced step budget
+   c. Resource error → Re-try with flushed memory
+3. If retry succeeds → continue normally
+4. If retry fails → escalate to next protocol
+```
+
+**Protocol 2: Context Reduction (Resource Errors)**
+
+```
+1. Memory monitor detects threshold breach
+2. Orchestrator requests memory flush:
+   a. Compress observations (emoji dedup)
+   b. Drop low-priority recent messages
+   c. Activate temporal gap markers
+3. If still over threshold → skip least-important worker
+4. Log warning to monitor pane
+```
+
+**Protocol 3: Fallback Degradation (Component Failures)**
+
+```
+1. Component failure detected (MCP, PlanDB, etc.)
+2. Orchestrator activates fallback:
+   a. MCP down → Use built-in tools only
+   b. PlanDB corrupt → Fall back to flat task list
+   c. Neo4j unavailable → Use memory recall only
+3. Log degraded mode to monitor pane
+4. Attempt component recovery in background
+```
+
+### 17.3. Self-Healing Workflow
+
+```
+  MONITOR (Always on)
+       │
+       ▼ Detect anomaly
+  DIAGNOSIS
+    1. Categorize: Transient / Persistent
+    2. Check: Has this happened before?
+    3. Pattern: What component is affected?
+       │
+       ▼
+  RECOVERY STRATEGY
+    Transient → Retry (Protocol 1)
+    Resource  → Reduce Context (Protocol 2)
+    Component → Fallback (Protocol 3)
+    Unknown   → Alert User (Manual)
+       │
+       ▼
+  VALIDATION
+    Recovery succeeded? → Resume workflow
+    Recovery failed? → Escalate to next level
+       │
+       ▼
+  LEARNING
+    Log recovery to wiki:
+    - What failed
+    - How it was fixed
+    - Whether the fix was correct
+    Update canaries with new pattern
+```
+
+### 17.4. Escalation Chain
+
+| Level | Action | Description |
+|-------|--------|-------------|
+| **0: Auto-Recovery** | 0-3 retries | Worker self-recovery, context reduction, fallback activation |
+| **1: Orchestrator** | Rework | Re-decompose task, re-assign workers, change approach |
+| **2: Human Alert** | `/approve` | Show failure summary, propose resolution, wait for human |
+| **3: Full Reset** | Archive → Restore | Archive current session, restore from snapshot, re-ask |
+| **4: Emergency** | All panes killed | State backed up to /workspace/export/, mark RECOVERY_NEEDED |
+
+### 17.5. Error Logging & Diagnostics
+
+```bash
+# Auto-generated error diagnostics (visible in monitor pane):
+
+# ── Session Log ────────────────────────────────────────────
+# [2024-01-15 14:32:01] ERROR: implementer (w1:p3) failed
+#   - Tool: file-write
+#   - Error: EACCES: permission denied
+#   - Retry count: 1/3
+#   - Fallback: Using read-only mode
+#   - Wiki updated: wiki/errors/permission-denied.md
+
+# ── Recovery Summary ──────────────────────────────────────
+# [2024-01-15 14:32:05] RECOVERY: implementer restored
+#   - Strategy: Context reduction
+#   - Result: Success (reduced context by 40%)
+#   - Wiki updated: wiki/patterns/recovery-success.md
+
+# ── Canary Alerts ─────────────────────────────────────────
+# [2024-01-15 14:32:10] CANARY: knowledge-graph integrity
+#   - Status: DEGRADED
+#   - Issue: Circular reference detected
+#   - Auto-fix: Removed cycle, logged to wiki
+```
+
+### 17.6. Self-Healing Commands
+
+```
+/heal trigger               Force self-healing trigger
+/heal status                Show current recovery status
+/heal history               Show past recovery events
+/heal reset                 Reset recovery counters
+/heal disable               Pause auto-recovery
+/heal enable                Resume auto-recovery
+/heal level <N>             Set max auto-recovery level
+/heal export                Export error log
+/heal import <log>          Import error patterns
+/heal test                  Test recovery with synthetic
+/canary list                List active canaries
+/canary status <name>       Check specific canary status
+/canary update              Re-run canary validation
+```
+
+---
+
+## 18. What This Architecture Gives Us
 
 1. **Full agent visibility** — Every worker in a Herdr pane, state visible in sidebar
 2. **Stack-agnostic** — No hardcoded framework dependencies; tools/MCPs dynamic
@@ -1198,6 +1594,236 @@ Three complementary knowledge systems integrate at the architecture layer:
 8. **External tool access** — MCP Client connects to any MCP server dynamically
 9. **Guardrails throughout** — Token limits, cost guards, approvals, injection detection
 10. **Observability end-to-end** — Herdr sidebar + Mastra events + background task streams
+11. **Terminal-native UI** — Structured commands, parseable responses, live updates, adaptive rendering
+12. **Human-in-the-loop** — Approval flows, `/approve` gating, interruptible operations
+13. **Session persistence** — Multi-level save points, auto-recovery, snapshot/restore, crash resilience
+14. **Self-healing** — Auto-detection, escalation chain, fallback degradation, learning from failures
+15. **Reliable handoffs** — Structured context transfer, chain of custody, ack/nack protocol
+16. **Plugin extensibility** — Custom tools, skills, workers, processors with security model
+
+---
+
+## 19. Multi-Agent Handoff Protocol
+
+Workers don't just work in isolation — they need to pass context, findings, and state to each other reliably. This section defines the handoff protocol.
+
+### 19.1. Handoff Types
+
+| Type | From | To | Trigger | Data |
+|------|------|----|---------|------|
+| **Research → Plan** | Researcher | Planner | Research complete | Sources, findings, gap analysis |
+| **Plan → Implement** | Planner | Implementer | Plan approved | Tasks, dependencies, strategy notes |
+| **Implement → Review** | Implementer | Reviewer | Code changes done | Diff, test results, notes |
+| **Review → Implement** | Reviewer | Implementer | Issues found | Issue list, severity, suggested fixes |
+| **Implement → Validate** | Implementer | Validator | Implementation done | Test plan, edge cases covered |
+| **Research → Wiki** | Any worker | Wiki | Learning captured | Pattern, decision, error, reference |
+
+### 19.2. Handoff Message Schema
+
+```typescript
+interface AgentHandoff {
+  id: string;                    // UUID for tracking
+  from: string;                  // Sending worker role
+  to: string;                    // Target worker role
+  timestamp: string;             // ISO 8601
+  phase: string;                 // Current workflow phase
+  taskId?: string;               // Related task ID
+
+  findings: {
+    summary: string;             // High-level summary
+    details: string;             // Detailed findings
+    sources?: string[];          // Source references
+    confidence: number;          // 0.0 - 1.0
+  };
+
+  state: {
+    current: string;             // Current working context
+    blocker?: string;            // Current blocker (if any)
+    nextAction?: string;         // Recommended next action
+    context: object;             // Serialized working context
+  };
+
+  handoffType: 'sync' | 'async'; // Sync: wait for ack. Async: fire-and-forget.
+  ackRequired: boolean;
+  ttl?: string;                  // Time to live for this handoff
+}
+```
+
+### 19.3. Handoff Flow
+
+```
+Sender:
+  1. Compose handoff message (findings + state + context)
+  2. Send to target via Mastra thread signal
+  3. Log handoff to wiki: wiki/handoffs/
+  4. Set ack timeout (if ackRequired)
+
+Receiver:
+  1. Parse handoff message
+  2. Update local context with sender's context
+  3. Update memory with new findings
+  4. Check for blockers in handoff context
+  5. Start processing
+
+  Success? ──Yes──▶ ACK sent ──→ Sender notified
+       │
+       ▼No
+  NACK sent ──▶ Escalate to orchestrator
+```
+
+### 19.4. Context Preservation Rules
+
+| Rule | Description |
+|------|-------------|
+| **Don't lose critical context** | File paths, function signatures, API endpoints, error messages, stack traces |
+| **Don't propagate noise** | Trim low-confidence findings (conf < 0.3), drop redundant context, compress large context |
+| **Preserve temporal context** | Timestamps for all findings, mark time-sensitive info with TTL, note last update |
+| **Maintain chain of custody** | Unique ID per handoff, full chain logged, traceable to source |
+| **Validate on receive** | Format validation before accepting, missing fields → NACK with request |
+
+### 19.5. Handoff Commands
+
+```
+/handoff create <from> <to>   Create manual handoff
+/handoff send <json>          Send handoff directly
+/handoff ack <id>             Acknowledge handoff
+/handoff nack <id> <reason>   Reject handoff
+/handoff list                 List all handoffs
+/handoff trace <id>           Trace handoff chain
+/handoff stats                Show handoff statistics
+/handoff export <id>          Export handoff as JSON
+/handoff retry <id>           Retry failed handoff
+/handoff cleanup              Purge old handoffs
+```
+
+### 19.6. Handoff Chain Visualization
+
+```
+research ──A──▶ planner ──B──▶ implementer
+  │                  │                     │
+  │ C                │ D                  │ E
+  ▼                  ▼                     ▼
+wiki              reviewer ◀────── implementer
+
+Chain: A → B → E → D → C
+ID:   h001 h002 h003 h004 h005
+Status: ✓  ✓  ✓  ✓  ✓
+```
+
+---
+
+## 20. Plugin & Extension System
+
+Users can extend the system without modifying core code. The plugin system follows a structured lifecycle with security checks.
+
+### 20.1. Plugin Types
+
+| Type | Description | Extension Point |
+|------|-------------|-----------------|
+| **Tool** | Custom function with input/output schema | `createTool()` in Mastra |
+| **Skill** | Markdown-based behavioral instructions | `.skill.md` files |
+| **MCP** | External MCP server config | MCP registry entry |
+| **Worker** | Custom agent role with tools/memory | `agents/` directory |
+| **Processor** | Transform input/output/error | `processors/` directory |
+| **Layout** | Custom BSP tree layout preset | `layouts/` directory |
+| **Memory** | Custom extractor/recall strategy | `memory/extractors/` |
+| **Protocol** | Custom signal/action schema | `protocols/` directory |
+
+### 20.2. Plugin Manifest Format
+
+```typescript
+interface PluginManifest {
+  id: string;                    // Unique plugin identifier
+  name: string;                  // Display name
+  version: string;               // Semantic version (semver)
+  type: 'tool' | 'skill' | 'mcp' | 'worker' | 'processor' | 'layout' | 'memory' | 'protocol';
+
+  author: string;
+  description: string;
+  tags: string[];                // For discovery/search
+
+  dependencies?: {
+    mastra?: string;             // Mastra version compatibility
+    node?: string;               // Node.js version requirement
+    npm?: Record<string, string>; // Required npm packages
+  };
+
+  permissions?: string[];        // Required permissions
+  sandbox?: {
+    enabled: boolean;            // Run in sandbox?
+    networkAccess?: boolean;     // Can access network?
+    fileAccess?: 'read' | 'write' | 'full';
+  };
+
+  source: 'registry' | 'local' | 'url';
+  url?: string;
+  path?: string;
+  installedAt: string;
+  updatedAt: string;
+  status: 'active' | 'inactive' | 'disabled' | 'error';
+}
+```
+
+### 20.3. Plugin Lifecycle
+
+```
+install  →  verify  →  load  →  activate
+  │         │        │        │
+  ▼         ▼        ▼        ▼
+registry  hash    manifest  runtime
+download  check   parse     registration
+
+update   →  verify  →  reload  →  activate
+uninstall  →  cleanup  →  remove
+disable    →  deactivate  →  freeze
+```
+
+### 20.4. Plugin Commands
+
+```
+/plugin install <id|url>      Install from registry/URL
+/plugin install local <path>  Install from local path
+/plugin update [id]           Update one or all plugins
+/plugin uninstall <id>        Remove plugin
+/plugin enable <id>           Enable plugin
+/plugin disable <id>          Disable plugin
+/plugin list                  List all plugins
+/plugin info <id>             Show plugin details
+/plugin search <query>        Search registry
+/plugin verify <id>           Verify plugin integrity
+/plugin categories            List available categories
+/plugin export <id>           Export plugin as package
+/plugin import <file>         Import plugin from file
+/plugin health                Show plugin health status
+/plugin logs <id>             Show plugin logs
+```
+
+### 20.5. Security Model
+
+| Check | Description | Policy |
+|-------|-------------|--------|
+| Hash verification | SHA-256 of plugin source | Must match manifest |
+| Permission check | Required vs. allowed permissions | User approval required |
+| Sandbox | Isolated execution environment | Mandatory for network access |
+| Version compatibility | Mastra version constraints | Block incompatible versions |
+| Dependency validation | Required packages available | Auto-install or reject |
+| Audit logging | All plugin actions logged | Always on |
+| Rate limiting | Plugin tool call limits | Configurable per-plugin |
+
+### 20.6. Plugin Discovery
+
+```
+Registry Search          Auto-Suggest             Manual Install
+/plugin search           After task               /plugin install github:pkg
+"security"               "Need?"                  After install:
+Results:                                            registry add
+• security-audit        1. Analyze task →         to available/
+• cve-db                suggest relevant         Auto-load if
+• sast-tools            2. Show preview          verified and in active/
+3. User approves              4. Auto-load if
+4. Install + verify             5. Load + activate
+5. Load + activate
+```
 
 ---
 

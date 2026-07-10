@@ -1,0 +1,7 @@
+run	commit	metric	value	memory_gb	status	description
+0	fc8ba27	lines	auto	0	discard	baseline: 1205-line architecture, comprehensive but verbose, lacks terminal-native UX design
+1	fc8ba27	lines	1444	0	keep	added terminal-native Human-Agent Interaction Protocol (§15): commands, response format, approval flow, live updates, terminal-aware rendering
+2	fc8ba27	lines	1633	0	keep	added session persistence & recovery (§16): multi-level persistence, auto-save triggers, 4 recovery scenarios, session lifecycle commands, snapshot type
+3	fc8ba27	lines	1822	0	keep	added error recovery & self-healing (§17): failure matrix, 3 protocols, healing workflow, 4-level escalation, diagnostics, commands
+4	fc8ba27	lines	1845	0	discard	multi-agent handoff section not fully added but content captured in §18 point 15
+5	fc8ba27	lines	1955	0	keep	added plugin & extension system (§19): 8 plugin types, manifest format, lifecycle, commands, security model, discovery flow
