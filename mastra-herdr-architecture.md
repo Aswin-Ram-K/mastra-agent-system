@@ -34,27 +34,45 @@ A stack-agnostic, skill-driven orchestrator system that:
 
 ## 1. Architecture Components
 
-### 1.1. Agent Hierarchy (Agent Pins)
+### 1.1. Two-Class Agent Hierarchy
+
+The system defines exactly **two classes** of agents. Communication is universal — only **pane/tab orchestration power** is restricted.
+
+See §1.3 for the full two-class architecture, §1.3.1 for enforcement, and §1.3.2 for the reporting protocol.
+
+#### Agent Pins (Role Overview)
+
+| Pin | Role | Class | Description |
+|-----|------|-------|-------------|
+| 🟣 | Orchestrator | Primary | Full orchestration, dispatch, tab/pane management |
+| 🔵 | Researcher | Sub-agent | Search, analyze, gather sources |
+| 🟡 | Planner | Sub-agent | Task decomposition, dependency graphs |
+| 🔴 | Reviewer | Sub-agent | Multi-angle code review |
+| 🟢 | Implementer | Sub-agent | Code writing, file modification |
+| 🟠 | Validator | Sub-agent | Test execution, validation |
+| 🔘 | Monitor | Sub-agent | State watching, anomaly detection |
+| 🟤 | Herder Integration Mgr | Primary | Herdr workspace/tab/pane operations |
+| 🟡 | GROOM Wiki Maint. | Sub-agent | Wiki self-maintenance |
+| 🔵 | PlanDB Task Worker | Sub-agent | Task claiming, graph updates |
+| 🟢 | Neo4j Memory Agent | Sub-agent | Relational memory writes |
+
+#### Primary vs Sub-Agent Power Summary
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ 🟣 ORCHESTRATOR (Mastra AgentController + Supervisor)           │
-│   - Breaks tasks into subtasks                                 │
-│   - Dispatches to workers with curated toolsets                │
-│   - Manages Herdr workspace/tab/pane layout                    │
-│   - Subscribes to Herdr agent status events                    │
-│   - Manages library registry (skills, tools, MCPs)             │
-│   - Runs inside a dedicated Herdr pane (w1:p1)                 │
-└──────────────────┬──────────────────────────────────────────────┘
-                   │  dispatches workers via Mastra agents
-                   │  each worker gets its own Herdr pane
-                   ▼
-┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐
-│ 🔵     │ │ 🟡     │ │ 🔴     │ │ 🟢     │ │ 🟠     │ │ 🔘     │
-│ RES    │ │ PLAN   │ │ REVI   │ │ IMPLE  │ │ VALID  │ │ MONIT  │
-│ ARCHER │ │ NNER   │ │ EWER   │ │ MENTER │ │ ATOR   │ │ OR     │
-│        │ │        │ │        │ │        │ │        │ │        │
-└────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘
+┌──────────────────┬────────────────┬───────────────┬────────────┐
+│ Capability       │ Primary Agent  │ Sub-Agent     │ Universal  │
+├──────────────────┼────────────────┼───────────────┼────────────┤
+│ Create tabs/panes│ ✅             │ ❌             │ —          │
+│ Split panes      │ ✅             │ ❌             │ —          │
+│ Manage layouts   │ ✅             │ ❌             │ —          │
+│ Signals/Messages │ ✅             │ ✅             │ All agents │
+│ File I/O         │ ✅             │ ✅             │ All agents │
+│ Shell execution  │ ✅             │ ✅             │ All agents │
+│ Knowledge query  │ ✅             │ ✅             │ All agents │
+│ PlanDB ops       │ ✅             │ ✅             │ All agents │
+│ Neo4j ops        │ ✅             │ ✅             │ All agents │
+│ Wiki ops         │ ✅             │ ✅             │ All agents │
+└──────────────────┴────────────────┴───────────────┴────────────┘
 ```
 
 ### 1.2. Library Layer
@@ -80,23 +98,148 @@ A stack-agnostic, skill-driven orchestrator system that:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.3. Herdr Integration Layer
+### 1.3. Two-Class Agent Hierarchy (Detailed)
+
+The system defines exactly **two classes** of agents. Communication is universal between them — only **pane/tab orchestration power** is restricted to the primary class.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  CLASS A: PRIMARY AGENT (You interact with this one)              │
+│                                                                    │
+│  🟣 ORCHESTRATOR — Full orchestration powers                     │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │ ✓ Create tabs & panes                                      │  │
+│  │ ✓ Split panes (vertical, equispaced)                      │  │
+│  │ ✓ Move panes between tabs                                  │  │
+│  │ ✓ Apply layout presets                                     │  │
+│  │ ✓ Close panes & tabs                                       │  │
+│  │ ✓ Dispatch sub-agents                                      │  │
+│  │ ✓ Receive sub-agent reports                                │  │
+│  │ ✓ Decide sub-agent continuation / closure                  │  │
+│  │ ✗ Cannot create sub-agents that themselves control panes  │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│  Resident in: Herdr workspace "herder" → Tab "home"             │
+│  Home tab is clean — no sub-agent intrusions                     │
+│                                                                    │
+└──────────────────────────┬───────────────────────────────────────┘
+                           │  dispatches sub-agents via Mastra
+                           │  creates tabs/panes via Herdr
+                           ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  CLASS B: SUB-AGENT (Spawned by primary agent)                    │
+│                                                                    │
+│  🔵🟡🔴🟢🟠🔘 — NO orchestration powers                            │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │ ✗ Cannot create tabs or panes                              │  │
+│  │ ✗ Cannot split or resize panes                             │  │
+│  │ ✗ Cannot move panes between tabs                           │  │
+│  │ ✗ Cannot close panes or tabs                               │  │
+│  │ ✗ Cannot invoke any herdr pane/tab/split/layout commands  │  │
+│  │                                                            │  │
+│  │ ✓ Universal communication (signals, messages, states)      │  │
+│  │ ✓ Report progress to orchestrator                          │  │
+│  │ ✓ Read other agents' outputs (if permitted)               │  │
+│  │ ✓ Query knowledge base, wiki, PlanDB                       │  │
+│  │ ✓ Execute code, tests, file ops                            │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│  Resident in: Their own tab in the project workspace             │
+│  Each sub-agent gets its own tab → one tab per sub-agent         │
+│  Sub-agents can only spawn panes via the orchestrator            │
+│                                                                    │
+└──────────────────────────────────────────────────────────────────┘
+
+KEY POWER BOUNDARY: Only the PRIMARY agent can call any herdr
+pane-splittab, split-layout, workspace-manage commands.
+Sub-agents are content workers — they produce, communicate,
+and report. The orchestrator decides continuation or closure.
+```
+
+### 1.3.1. Agent Class Enforcement
+
+Every agent's system prompt and Mastra configuration explicitly declares its class:
+
+```typescript
+// Primary agent (orchestrator) — has orchestration tools
+const primaryAgent = createAgent({
+  id: 'orchestrator',
+  model: 'gpt-4o',
+  instructions: `You are the PRIMARY AGENT. You have full orchestration powers.
+You may create tabs, panes, split layouts, dispatch sub-agents, and manage
+the entire Herdr workspace. Only YOU can control pane/tab operations.
+Sub-agents (CLASS B) cannot — they must report to you.
+
+Your home tab is always clean. Sub-agents live in their own tabs.
+You decide when sub-agents continue or are closed.`,
+  // Orchestrator tools include herdr commands
+  tools: [
+    herdrCreateTab, herdrSplitPane, herdrApplyLayout,   // orchestration
+    herdrCloseTab, herdrMovePane, herdrRenameTab,       // orchestration
+    dispatchSubAgent, reportSubAgent, signals,          // communication
+    readFiles, writeFiles, bash, codeSearch,            // universal
+    planDB, neo4j, wiki, knowledgeBase,                  // universal
+  ],
+  agentType: 'primary',  // <-- enforced power boundary
+});
+
+// Sub-agents — NO orchestration tools
+const subAgentTemplate = createAgent({
+  id: 'subagent',
+  model: 'gpt-4o-mini',  // cheaper model for subs
+  instructions: `You are a SUB-AGENT (CLASS B). You have NO orchestration powers.
+You CANNOT create tabs, panes, split layouts, or manage workspace.
+All pane/tab operations must be handled by the PRIMARY AGENT.
+
+Your role: {role_description}
+
+You MUST report progress to the orchestrator after completing work.
+The orchestrator will decide if you should continue or close.`,
+  // Sub-agent tools — NO herdr pane/tab/split commands
+  tools: [
+    // Universal communication
+    readStateSignal, sendMessage, sendNotification,
+    // Universal tools
+    readFiles, writeFiles, bash, codeSearch,
+    // Knowledge
+    planDB, neo4j, wiki,
+    // NO herdr pane/tab commands
+  ],
+  agentType: 'subagent',  // <-- enforced power boundary
+  restrictHerdrAccess: true,  // blocks any herdr pane/tab/split call
+});
+```
+
+### 1.3.2. Sub-Agent Reporting Protocol
+
+Every sub-agent follows this reporting flow:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ 🟤 HERDR INTEGRATION MANAGER                                    │
-│   - Creates workspaces per project                              │
-│   - Manages tabs (agents, server, logs, history)                │
-│   - Splits panes for each worker agent                          │
-│   - Reports agent states via pane.report_agent()                │
-│   - Subscribes to Herdr events via events.subscribe()           │
-│   - Applies layout presets via layout.apply()                   │
-│   - Moves panes dynamically via pane.move()                     │
-│   - Watches for blocked agents via wait agent-status            │
+│  SUB-AGENT LIFECYCLE                                            │
+│                                                                  │
+│  1. SPAWNED by orchestrator in its own tab                      │
+│  2. WORKS on assigned task                                       │
+│  3. REPORTS completion → orchestrator receives signal           │
+│  4. ORCHESTRATOR decides:                                      │
+│     ├── CONTINUE: assign more work → sub-agent stays active   │
+│     ├── CLOSE: tab stays open but agent stops → idle tab      │
+│     └── ARCHIVE: move pane to history tab → cleanup           │
+│  5. Sub-agent NEVER decides its own fate                        │
 └─────────────────────────────────────────────────────────────────┘
+
+Reporting format (universal, works for all sub-agents):
+{
+  agentType: 'subagent',
+  tabId: 't1',          // the tab this agent resides in
+  paneId: 'p3',         // its pane within the tab
+  status: 'complete' | 'blocked' | 'in-progress' | 'error',
+  output: 'summary of work done',
+  artifacts: ['file1.ts', 'file2.ts'],  // files changed
+  needsContinuation: true | false,
+  nextSteps: 'what to do next'         // suggestion, not decision
+}
 ```
 
-### 1.4. Observational Memory Layer
+### 1.5. Observational Memory Layer
 
 Every agent gets Mastra's **Observational Memory** (OM) — a long-term memory system that automatically compresses conversation history into dense observations, preventing context rot and enabling cross-session continuity.
 
@@ -503,269 +646,563 @@ const implementTool = createTool({
 
 ---
 
-## 3. Herdr Integration
+## 3. Herdr Integration — Two-Class Pane Architecture
 
-### 3.1. Pane Architecture
+### 3.1. Workspace & Tab Model (Two Classes)
 
-Every agent gets its own Herdr pane. The orchestrator pane manages layout.
+The workspace has a fixed structure. Every agent gets its own tab. Only the **primary agent** (you interact with) can create/modify tabs and panes.
 
 ```
-Workspace: "project-name"
-├── Tab: "agents" (main workspace, default)
-│   ├── Pane 1 (w1:p1): ORCHESTRATOR — Mastra agent loop
-│   ├── Pane 2 (w1:p2): 🔵 RESEARCHER — Worker agent
-│   ├── Pane 3 (w1:p3): 🟡 PLANNER — Worker agent
-│   ├── Pane 4 (w1:p4): 🔴 REVIEWER — Worker agent
-│   ├── Pane 5 (w1:p5): 🟢 IMPLEMENTER — Worker agent
-│   └── Pane 6 (w1:p6): 🟠 VALIDATOR — Worker agent
+Workspace: "herder" (reserved for the primary agent)
+├── Tab: "home"       ← PRIMARY AGENT's home tab (always clean, never crowded)
+│   └── Pane: orchestrator
 │
-├── Tab: "server" (dev server, logs)
-│   └── Pane 1 (w1:t2:p1): npm run dev / server output
+├── Tab: "worker-1"   ← Each sub-agent gets its OWN tab
+├── Tab: "worker-2"   ← No two sub-agents share a tab
+├── Tab: "worker-3"   ← Primary agent spawns tabs for sub-agents
+├── Tab: "worker-N"   ← Up to 12 sub-agent tabs
 │
-├── Tab: "logs" (consolidated worker output)
-│   ├── Pane 1 (w1:t3:p1): orchestrator consolidated log
-│   └── Pane 2 (w1:t3:p2): individual worker logs feed
-│
-└── Tab: "history" (completed workers, results)
-    └── Panes: completed worker output archives
+└── Tab: "monitor"    ← Orchestrator's monitoring tab (optional)
 ```
 
-### 3.2. Declarative Layout Presets (BSP Trees)
+**Rules:**
 
-Each workflow type has a saved layout preset that gets restored instantly via `layout.apply()`.
+- The primary agent lives in `home` tab — this tab is always clean (its chat).
+- Each sub-agent gets one dedicated tab (e.g., `worker-researcher`, `worker-implementer`).
+- Sub-agents CANNOT create tabs, panes, splits, or layouts.
+- Sub-agents CAN communicate, read files, run code, query knowledge — all universal.
+- The orchestrator decides when a sub-agent continues or is closed.
 
-#### Research Layout Preset
+### 3.2. Vertical Split Constraint
+
+When the orchestrator needs multiple sub-agents visible at once, panes are **always split vertically** and **always equispaced**. Only 2, 3, or 4 panes per tab are allowed.
+
+```
+4-PANE (vertical, equispaced):  ║ = 25% each
+┌────┬────┬────┬────┐
+│ P1 │ P2 │ P3 │ P4 │
+├────┼────┼────┼────┤
+│ P5 │ P6 │ P7 │ P8 │
+├────┼────┼────┼────┤
+│ P9 │P10 │P11 │P12 │
+└────┴────┴────┴────┘
+
+3-PANE (vertical, equispaced): ║ = 33% each
+┌────┬────┬────┐
+│ P1 │ P2 │ P3 │
+├────┼────┼────┤
+│ P4 │ P5 │ P6 │
+├────┼────┼────┤
+│ P7 │ P8 │ P9 │
+└────┴────┴────┘
+
+2-PANE (vertical, equispaced): ║ = 50% each
+┌──────┬──────┐
+│  P1  │  P2  │
+├──────┼──────┤
+│  P3  │  P4  │
+├──────┼──────┤
+│  P5  │  P6  │
+└──────┴──────┘
+```
+
+### 3.3. Ready-Made Pane Templates
+
+The orchestrator has these templates ready — no construction needed on the fly.
+
+#### Template: 1 Pane (Single Sub-Agent)
+
+```
+┌────────────────────────────────────────┐
+│  TAB: worker-researcher                │
+│  ┌────────────────────────────────────┐│
+│  │  🔵 RESEARCHER (worker-researcher) ││
+│  │                                    ││
+│  │  [Agent working in its tab]        ││
+│  │                                    ││
+│  └────────────────────────────────────┘│
+└────────────────────────────────────────┘
+```
+
+Herdr BSP:
 
 ```json
 {
   "workspace_id": "w1",
-  "tab_label": "agents",
-  "focus": true,
+  "tab_label": "worker-researcher",
+  "focus": false,
+  "root": {
+    "type": "pane",
+    "label": "researcher",
+    "cwd": "/project",
+    "command": ["sh", "-c", "herdr-agent subagent-researcher"]
+  }
+}
+```
+
+#### Template: 2 Panes
+
+```
+┌────────────────────────────────────────┐
+│  TAB: worker-implement (2 panes)       │
+│  ┌──────┬──────┐                       │
+│  │ 🔴   │ 🟢   │                       │
+│  │ RVIEW  │IMPLEM│                       │
+│  │ EWVER  │ ENTER│                       │
+│  │ ER     │ ER   │                       │
+│  ├──────┼──────┤                       │
+│  │ 🟠   │ 🔘   │                       │
+│  │ VALI   │ MONI │                       │
+│  │ DATOR  │ TOR  │                       │
+│  └──────┴──────┘                       │
+└────────────────────────────────────────┘
+```
+
+Herdr BSP:
+
+```json
+{
+  "workspace_id": "w1",
+  "tab_label": "worker-implement",
+  "focus": false,
   "root": {
     "type": "split",
     "direction": "right",
-    "ratio": 0.3,
+    "ratio": 0.5,
     "first": {
       "type": "pane",
-      "label": "orchestrator",
+      "label": "reviewer",
       "cwd": "/project",
-      "command": ["sh", "-c", "herdr-agent orchestrator"]
+      "command": ["sh", "-c", "herdr-agent subagent-reviewer"]
     },
     "second": {
-      "type": "split",
-      "direction": "down",
-      "ratio": 0.5,
-      "first": {
-        "type": "pane",
-        "label": "researcher",
-        "cwd": "/project",
-        "command": ["sh", "-c", "herdr-agent researcher"]
-      },
-      "second": {
-        "type": "pane",
-        "label": "planner",
-        "cwd": "/project",
-        "command": ["sh", "-c", "herdr-agent planner"]
-      }
+      "type": "pane",
+      "label": "implementer",
+      "cwd": "/project",
+      "command": ["sh", "-c", "herdr-agent subagent-implementer"]
     }
   }
 }
 ```
 
-#### Implementation Layout Preset
+#### Template: 3 Panes
+
+```
+┌────────────────────────────────────────┐
+│  TAB: worker-impl (3 panes)            │
+│  ┌─────┬─────┬─────┐                   │
+│  │ 🔴  │ 🟢  │ 🟠  │                   │
+│  │RVIEW │IMPLE│VALID│                   │
+│  │ EWV │ EMEN│ ATOR│                   │
+│  │ ER  │ ER  │     │                   │
+│  ├─────┼─────┼─────┤                   │
+│  │ 🔘  │     │     │                   │
+│  │MONI │     │     │                   │
+│  │ TOR │     │     │                   │
+│  ├─────┴─────┴─────┤                   │
+│  │ [empty]         │                   │
+│  └─────────────────┘                   │
+└────────────────────────────────────────┘
+```
+
+Herdr BSP (3 panes vertical, equispaced):
 
 ```json
 {
   "workspace_id": "w1",
-  "tab_label": "agents",
-  "focus": true,
+  "tab_label": "worker-impl",
+  "focus": false,
   "root": {
     "type": "split",
     "direction": "right",
-    "ratio": 0.4,
+    "ratio": 0.333,
     "first": {
       "type": "pane",
-      "label": "orchestrator",
-      "cwd": "/project"
+      "label": "reviewer",
+      "cwd": "/project",
+      "command": ["sh", "-c", "herdr-agent subagent-reviewer"]
     },
     "second": {
       "type": "split",
-      "direction": "down",
+      "direction": "right",
       "ratio": 0.5,
       "first": {
         "type": "pane",
         "label": "implementer",
         "cwd": "/project",
-        "command": ["sh", "-c", "herdr-agent implementer"]
+        "command": ["sh", "-c", "herdr-agent subagent-implementer"]
       },
       "second": {
         "type": "pane",
         "label": "validator",
         "cwd": "/project",
-        "command": ["sh", "-c", "herdr-agent validator"]
+        "command": ["sh", "-c", "herdr-agent subagent-validator"]
       }
     }
   }
 }
 ```
 
-#### Multi-Agent Layout Preset (All Workers)
+#### Template: 4 Panes
+
+```
+┌────────────────────────────────────────┐
+│  TAB: worker-all (4 panes)             │
+│  ┌─────┬─────┬─────┬─────┐            │
+│  │ 🔵  │ 🟡  │ 🔴  │ 🟢  │            │
+│  │RES   │PLAN │RVIEW │IMPLE│            │
+│  │ ARCH │ NNER│ EWVER│ ER  │            │
+│  │ ER   │     │ ER    │ ER  │            │
+│  ├─────┼─────┼─────┼─────┤            │
+│  │ 🟠  │ 🔘  │     │     │            │
+│  │VALI  │MONI │     │     │            │
+│  │ DATOR│ TOR │     │     │            │
+│  ├─────┴─────┴─────┴─────┤            │
+│  │ [remaining panes...]  │            │
+│  └───────────────────────┘            │
+└────────────────────────────────────────┘
+```
+
+Herdr BSP (4 panes, two rows of 2, vertical splits, equispaced):
 
 ```json
 {
   "workspace_id": "w1",
-  "tab_label": "agents",
-  "focus": true,
+  "tab_label": "worker-all",
+  "focus": false,
   "root": {
     "type": "split",
     "direction": "right",
-    "ratio": 0.25,
+    "ratio": 0.5,
     "first": {
-      "type": "pane",
-      "label": "orchestrator",
-      "cwd": "/project"
+      "type": "split",
+      "direction": "right",
+      "ratio": 0.5,
+      "first": {
+        "type": "pane",
+        "label": "researcher",
+        "cwd": "/project",
+        "command": ["sh", "-c", "herdr-agent subagent-researcher"]
+      },
+      "second": {
+        "type": "pane",
+        "label": "planner",
+        "cwd": "/project",
+        "command": ["sh", "-c", "herdr-agent subagent-planner"]
+      }
     },
     "second": {
       "type": "split",
-      "direction": "down",
+      "direction": "right",
       "ratio": 0.5,
       "first": {
-        "type": "split",
-        "direction": "right",
-        "ratio": 0.5,
-        "first": { "type": "pane", "label": "researcher", "cwd": "/project" },
-        "second": { "type": "pane", "label": "planner", "cwd": "/project" }
+        "type": "pane",
+        "label": "reviewer",
+        "cwd": "/project",
+        "command": ["sh", "-c", "herdr-agent subagent-reviewer"]
       },
       "second": {
-        "type": "split",
-        "direction": "right",
-        "ratio": 0.5,
-        "first": { "type": "pane", "label": "reviewer", "cwd": "/project" },
-        "second": { "type": "pane", "label": "implementer", "cwd": "/project" }
+        "type": "pane",
+        "label": "implementer",
+        "cwd": "/project",
+        "command": ["sh", "-c", "herdr-agent subagent-implementer"]
       }
     }
   }
 }
 ```
 
-### 3.3. Agent State Bridge
+### 3.4. Full Deployment: 1 to 12 Panes
 
-Each worker pane reports its Mastra agent state to Herdr so the sidebar reflects real progress.
+When deploying sub-agents, the orchestrator distributes them across tabs following the **max 4 panes per tab** rule.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    DEPLOYMENT MATRIX                              │
+│                                                                   │
+│  Sub-Agents → Tabs Required → Pane Layout                       │
+│  ──────────────────────────────────────────────────────────────  │
+│                                                                   │
+│  1 sub-agent → 1 tab, 1 pane                                    │
+│  ┌──────┐                                                         │
+│  │ RSRCH │                                                        │
+│  └──────┘                                                         │
+│                                                                   │
+│  2 sub-agents → 1 tab, 2 panes                                  │
+│  ┌──────┬──────┐                                                 │
+│  │ RSRCH │ IMPL │                                                 │
+│  └──────┴──────┘                                                 │
+│                                                                   │
+│  3 sub-agents → 1 tab, 3 panes                                  │
+│  ┌────┬────┬────┐                                               │
+│  │ R  │ PL │ RV │                                               │
+│  └────┴────┴────┘                                               │
+│                                                                   │
+│  4 sub-agents → 1 tab, 4 panes                                  │
+│  ┌────┬────┬────┬────┐                                           │
+│  │ R  │ PL │ RV │ IM │                                           │
+│  └────┴────┴────┴────┘                                           │
+│                                                                   │
+│  5 sub-agents → 2 tabs (4+1)                                    │
+│  Tab 1: ┌────┬────┬────┬────┐  Tab 2: ┌──────┐                 │
+│         │ R  │ PL │ RV │ IM │        │ VAL  │                 │
+│         └────┴────┴────┴────┘        └──────┘                 │
+│                                                                   │
+│  6 sub-agents → 2 tabs (4+2)                                    │
+│  Tab 1: ┌────┬────┬────┬────┐  Tab 2: ┌──────┬──────┐           │
+│         │ R  │ PL │ RV │ IM │        │ VAL  │ MON  │           │
+│         └────┴────┴────┴────┘        └──────┴──────┘           │
+│                                                                   │
+│  7 sub-agents → 2 tabs (4+3)                                    │
+│  Tab 1: ┌────┬────┬────┬────┐  Tab 2: ┌────┬────┬────┐        │
+│         │ R  │ PL │ RV │ IM │        │ VAL│ MON│  - │        │
+│         └────┴────┴────┴────┘        └────┴────┴────┘        │
+│                                                                   │
+│  8 sub-agents → 2 tabs (4+4)                                    │
+│  Tab 1: ┌────┬────┬────┬────┐  Tab 2: ┌────┬────┬────┬────┐  │
+│         │ R  │ PL │ RV │ IM │        │ VAL│ MON│  - │  - │  │
+│         └────┴────┴────┴────┘        └────┴────┴────┴────┘  │
+│                                                                   │
+│  9 sub-agents → 3 tabs (4+4+1)                                 │
+│  Tab 1: ┌────┬────┬────┬────┐  Tab 2: ┌────┬────┬────┬────┐  │
+│         │ R  │ PL │ RV │ IM │        │ VAL│ MON│  - │  - │  │
+│         └────┴────┴────┴────┘        └────┴────┴────┴────┘  │
+│  Tab 3: ┌──────┐                                                      │
+│         │  -   │                                                      │
+│         └──────┘                                                      │
+│                                                                   │
+│  10 sub-agents → 3 tabs (4+4+2)                                │
+│  Tab 1: ┌────┬────┬────┬────┐  Tab 2: ┌────┬────┬────┬────┐  │
+│         │ R  │ PL │ RV │ IM │        │ VAL│ MON│  - │  - │  │
+│         └────┴────┴────┴────┘        └────┴────┴────┴────┘  │
+│  Tab 3: ┌──────┬──────┐                                      │
+│         │  -  │  -  │                                      │
+│         └──────┴──────┘                                      │
+│                                                                   │
+│  11 sub-agents → 3 tabs (4+4+3)                                │
+│  Tab 1: ┌────┬────┬────┬────┐  Tab 2: ┌────┬────┬────┬────┐  │
+│         │ R  │ PL │ RV │ IM │        │ VAL│ MON│  - │  - │  │
+│         └────┴────┴────┴────┘        └────┴────┴────┴────┘  │
+│  Tab 3: ┌────┬────┬────┐                                     │
+│         │  - │  - │  - │                                     │
+│         └────┴────┴────┘                                     │
+│                                                                   │
+│  12 sub-agents → 3 tabs (4+4+4)                                │
+│  Tab 1: ┌────┬────┬────┬────┐  Tab 2: ┌────┬────┬────┬────┐  │
+│         │ R  │ PL │ RV │ IM │        │ VAL│ MON│  - │  - │  │
+│         └────┴────┴────┴────┘        └────┴────┴────┴────┘  │
+│  Tab 3: ┌────┬────┬────┬────┐                               │
+│         │  - │  - │  - │  - │                               │
+│         └────┴────┴────┴────┘                               │
+│                                                                   │
+│  Max deployment: 3 tabs × 4 panes = 12 sub-agents simultaneously │
+└──────────────────────────────────────────────────────────────────┘
+
+Tab Naming Convention:
+  worker-{role} or worker-{batch1-3}
+  Example: worker-researcher, worker-impl, worker-all
+
+Pane Naming Convention:
+  {emoji}-{ROLE-NAME}
+  Example: 🔵-RSRCH, 🟢-IMPLE, 🔴-RVIEW
+```
+
+### 3.5. Template Application Commands
+
+The orchestrator uses these exact commands to apply templates:
+
+```bash
+# === TEMPLATE: 1 Pane ===
+# Create tab for single sub-agent
+herdr tab create --workspace herder --label "worker-researcher" --no-focus
+# Apply 1-pane BSP
+herdr layout apply --workspace herder --tab-label "worker-researcher" \
+  --bsp '{"type":"pane","label":"researcher","command":["sh","-c","herdr-agent subagent-researcher"]}'
+
+# === TEMPLATE: 2 Panes ===
+# Create tab for 2 sub-agents
+herdr tab create --workspace herder --label "worker-implement" --no-focus
+herdr layout apply --workspace herder --tab-label "worker-implement" \
+  --bsp '{"direction":"right","ratio":0.5,"first":{"type":"pane","label":"reviewer","command":["sh","-c","herdr-agent subagent-reviewer"]},"second":{"type":"pane","label":"implementer","command":["sh","-c","herdr-agent subagent-implementer"]}}'
+
+# === TEMPLATE: 3 Panes ===
+herdr tab create --workspace herder --label "worker-triple" --no-focus
+herdr layout apply --workspace herder --tab-label "worker-triple" \
+  --bsp '{"direction":"right","ratio":0.333,"first":{"type":"pane","label":"reviewer"},"second":{"direction":"right","ratio":0.5,"first":{"type":"pane","label":"implementer"},"second":{"type":"pane","label":"validator"}}}'
+
+# === TEMPLATE: 4 PanES ===
+herdr tab create --workspace herder --label "worker-all" --no-focus
+herdr layout apply --workspace herder --tab-label "worker-all" \
+  --bsp '{"direction":"right","ratio":0.5,"first":{"direction":"right","ratio":0.5,"first":{"type":"pane","label":"researcher"},"second":{"type":"pane","label":"planner"}},"second":{"direction":"right","ratio":0.5,"first":{"type":"pane","label":"reviewer"},"second":{"type":"pane","label":"implementer"}}}'
+```
+
+### 3.6. Sub-Agent Power Boundary Enforcement
+
+Sub-agents must be explicitly told they cannot control any Herdr pane/tab operations. This is enforced at two levels:
+
+**Level 1: Tool Exclusion (Mastra configuration)**
 
 ```typescript
-// Inside each worker pane's shell/agent
-// Herdr injects HERDR_PANE_ID, HERDR_TAB_ID, HERDR_WORKSPACE_ID
-
-// Worker reports to Herdr:
-herdr agent start <role> \
-  --pane <pane_id> \
-  --label "<role-display>" \
-  --workspace <workspace_id>
-
-// Herdr auto-detects the agent in the pane.
-// If the agent is a Mastra agent, we also report state explicitly:
-
-// Pane reports agent state to Herdr sidebar:
-// CLI wrapper (called from within the agent):
-herdr pane report-agent <pane_id> \
-  --source custom:orchestrator \
-  --agent <agent-role> \
-  --state <working|blocked|idle|done> \
-  --custom-status <activity-label>
+// Sub-agents are constructed WITHOUT any herdr pane/tab/split tools
+const subAgentConfig = {
+  tools: [
+    readFiles, writeFiles, bash, codeSearch,    // universal tools
+    readStateSignal, sendMessage, sendNotification, // universal comms
+    planDB, neo4j, wiki,                        // knowledge tools
+    // NO herdr pane commands — explicitly excluded
+    // NO herdr tab commands — explicitly excluded  
+    // NO herdr layout commands — explicitly excluded
+  ],
+};
 ```
 
-### 3.4. Event Subscription Flow
+**Level 2: System Prompt Constraint**
 
-The orchestrator subscribes to Herdr events for reactive orchestration.
+```
+You are a SUB-AGENT (CLASS B).
 
-```bash
-# Orchestrator pane subscribes to agent status changes:
-# Via raw socket API:
-#   method: "events.subscribe"
-#   subscriptions: [
-#     { type: "pane.agent_status_changed", pane_id: "*" },
-#     { type: "pane.output_matched", pane_id: "*" }
-#   ]
+STRICT RULE: You CANNOT create, close, move, split, resize, or manage
+any Herdr panes, tabs, or layouts. All workspace orchestration is the
+exclusive domain of the PRIMARY AGENT (orchestrator).
 
-# When a worker goes "blocked", orchestrator receives event and:
-# 1. Reads the blocked pane's output to understand why
-# 2. Decides whether to intervene or wait
-# 3. If intervention needed: sends input to pane or routes to another worker
+If you need a pane created or modified, report to the orchestrator.
+The orchestrator will decide whether to create it.
+
+You CAN:
+- Read files, run code, execute tests
+- Communicate with other agents via signals/messages
+- Query PlanDB, Neo4j, GROOM wiki
+- Produce code, documentation, analysis
+
+You CANNOT:
+- Call herdr pane split/create/move/close
+- Call herdr tab create/modify/close  
+- Call herdr layout apply/zoom/snap
+- Manage any workspace structure
 ```
 
-### 3.5. Herdr CLI Command Checklist (Orchestrator Snippets)
+### 3.7. Sub-Agent Reporting & Lifecycle
 
-These are reusable command snippets the orchestrator agent uses to control Herdr:
+Every sub-agent follows this lifecycle. The orchestrator is the only decision-maker.
 
-#### Pane Management
+```
+1. ORCHESTRATOR decides to spawn sub-agent
+   └─→ creates tab (or adds pane to existing tab)
+   └─→ starts agent in pane
+
+2. SUB-AGENT works on task
+   └─→ communicates via signals/messages (universal)
+   └─→ produces output (code, analysis, docs)
+
+3. SUB-AGENT REPORTS completion
+   └─→ sends signal to orchestrator with status + output
+
+4. ORCHESTRATOR decides:
+   ├── CONTINUE → assign more work → agent stays active
+   ├── CLOSE → stop agent, tab remains (clean slate)
+   └── ARCHIVE → move pane to history tab → cleanup
+
+5. SUB-AGENT NEVER decides its own continuation
+   └─→ must wait for orchestrator instruction
+```
+
+Reporting format (universal for all sub-agents):
+
+```json
+{
+  "agentType": "subagent",
+  "tabId": "t3",
+  "paneId": "p2",
+  "role": "implementer",
+  "status": "complete",
+  "output": "Implemented JWT auth middleware with refresh tokens",
+  "artifacts": ["src/auth/jwt.ts", "src/auth/refresh.ts"],
+  "needsContinuation": true,
+  "nextSteps": "Add unit tests for JWT middleware"
+}
+```
+
+### 3.8. Communication Layer (Universal — Both Classes)
+
+Communication between agents is **identical** regardless of class. Only orchestration power differs.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  UNIVERSAL COMMUNICATION LAYER                                  │
+│                                                                  │
+│  All agents (Primary + Sub) have equal access to:               │
+│                                                                  │
+│  1. Signals (Mastra)                                            │
+│     - sendMessage()              — direct messages              │
+│     - sendStateSignal()          — progress state               │
+│     - sendNotificationSignal()   — alerts                       │
+│                                                                  │
+│  2. Shared Knowledge                                            │
+│     - PlanDB (task graph)         — all agents read/write       │
+│     - Neo4j (relational memory)  — all agents query/write       │
+│     - GROOM Wiki (self-maint KB) — all agents read/contribute   │
+│                                                                  │
+│  3. File System                                                   │
+│     - Read/write files in workspace                             │
+│     - Create subdirectories as needed                           │
+│                                                                  │
+│  4. Shell / Code Execution                                       │
+│     - Run bash commands                                         │
+│     - Execute tests, scripts                                    │
+│                                                                  │
+│  PRIMARY ONLY:                                                    │
+│  - herdr pane create/split/move/close/zoom                      │
+│  - herdr tab create/modify/close/rename                         │
+│  - herdr layout apply/zoom/snapshot                             │
+│  - herdr workspace create/destroy                               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 3.9. Event Subscription (Orchestrator-Only)
+
+The orchestrator pane subscribes to Herdr events for reactive orchestration:
 
 ```bash
-# Discover own pane and neighbors
-herdr pane list
-herdr tab list --workspace <wid>
+# Orchestrator pane subscribes via raw socket API:
+{
+  "method": "events.subscribe",
+  "subscriptions": [
+    { "type": "pane.agent_status_changed", "pane_id": "*" },
+    { "type": "pane.output_matched", "pane_id": "*" },
+    { "type": "tab.created" },
+    { "type": "tab.closed" }
+  ]
+}
+```
 
-# Create new worker pane (split right, no focus)
-NEW_PANE=$(herdr pane split <pane_id> --direction right --no-focus \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
-herdr pane run "$NEW_PANE" "<command-to-start-agent>"
+### 3.10. Orchestrator Herdr Command Reference
 
-# Read worker output
+These are the ONLY commands the orchestrator uses to manage Herdr structure:
+
+```bash
+# === Tab Management ===
+herdr tab create --workspace herder --label "worker-{role}" --no-focus
+herdr tab rename <tab_id> "worker-{new-role}"
+herdr tab list --workspace herder
+
+# === Pane Template Application ===
+herdr layout apply --workspace herder --tab-label "worker-{name}" --bsp <template>
+# Templates: 1-pane, 2-panes, 3-panes, 4-panes
+
+# === Pane Management ===
+herdr pane list --workspace herder
 herdr pane read <pane_id> --source recent --lines 50
-
-# Send input to worker
 herdr pane run <pane_id> "<instruction>"
-```
+herdr pane zoom <pane_id> --on/--off
 
-#### Agent Management
-
-```bash
-# Start agent in pane (auto-detects)
-herdr agent start <role> --pane <pane_id> --workspace <wid> --label "<role-name>"
-
-# Wait for worker to complete
+# === Agent Lifecycle ===
+herdr agent start <role> --pane <pane_id> --workspace herder
 herdr wait agent-status <pane_id> --status done --timeout 300000
+herdr agent rename <pane_id> "<role>: {status}"
 
-# Wait for specific output
-herdr wait output <pane_id> --match "READY" --regex --timeout 30000
-
-# Rename agent display
-herdr agent rename <pane_id> "<role>: active"
-```
-
-#### Layout Management
-
-```bash
-# Apply layout preset
-# (via socket API — layout.apply with BSP tree)
-
-# Export current layout for saving
-herdr api snapshot > layout-snapshot.json
-
-# Zoom a worker pane for focus
-herdr pane zoom <pane_id> --on
-herdr pane zoom <pane_id> --off
-
-# Swap panes
-herdr pane swap <pane_id> --direction right
-
-# Move pane to history tab
-herdr pane move <pane_id> \
-  --destination "tab:<tab_id>" \
-  --split right \
-  --focus
-```
-
-#### Workspace Management
-
-```bash
-# Create workspace for project
+# === Workspace Management ===
+herdr workspace focus herder
 herdr workspace create --cwd /project/path --label "project-name"
-
-# Create worktree checkout
-herdr worktree create --workspace <wid> --branch "feature/xyz"
-
-# Focus workspace
-herdr workspace focus <wid>
 ```
 
 ---
@@ -805,8 +1242,6 @@ interface WorkerToolset {
 ```
 
 ---
-
-
 
 ### 4.3. Detailed Role Specifications
 
@@ -1215,8 +1650,6 @@ interface MCPLifecycle {
 //    - security-scan.audit-dependencies (check deps)
 ```
 
-
-
 ---
 
 ## 6. Library Registry Structure
@@ -1390,7 +1823,6 @@ mastra-agent-system/
 
 ---
 
-
 ### 8.1. Request Lifecycle Stages
 
 | Stage | Step | Duration | Actor | Output |
@@ -1524,7 +1956,6 @@ const reviewOutput = {
   ],
 };
 ```
-
 
 ## 9. Error Handling & Recovery
 
@@ -1727,8 +2158,6 @@ interface HerdrEvent {
 /obs config <key> <value>     Configure observability settings
 /obs thresholds set <rule> <value>  Set alert threshold
 ```
-
-
 
 ---
 
@@ -2413,8 +2842,6 @@ const GUARDRAILS = {
 };
 ```
 
-
-
 ## 20. Testing & Validation Strategy
 
 The system needs rigorous self-testing at multiple levels to ensure reliability. This section defines the testing pyramid.
@@ -2568,8 +2995,6 @@ Each agent role gets unit tests covering its specific responsibilities:
 ```
 
 ---
-
-
 
 ## 21. Configuration System
 
@@ -3177,7 +3602,6 @@ cp -r data/ wiki/ backups/session-$(date +%Y%m%d)/
 | **Health check** | Every minute | Health endpoint |
 | **Log rotation** | Daily (system) | `journalctl --rotate` |
 
-
 ## 26. Deterministic Orchestration & Token Optimization
 
 This section details how to optimize the system for speed and token efficiency by replacing LM reasoning with deterministic commands, rule-based routing, and structured patterns.
@@ -3228,6 +3652,7 @@ TASK_INFO=$(task-router.sh "Implement user auth with JWT")
 ```
 
 **Replace:**
+
 ```
 OLD (LM): "Analyze the task and determine which workers/tools to use" (~2000 tokens, 2-3s)
 NEW (CLI): Pattern-matched task router (0 tokens, <50ms)
@@ -3347,6 +3772,7 @@ function getWorkerProfile(worker: string, taskType: string): WorkerConfig {
 ```
 
 **Replace:**
+
 ```
 OLD (LM): "Decide what tools the implementer should use" (~1500 tokens, 1-2s)
 NEW (Lookup): Profile table lookup (0 tokens, <1ms)
@@ -3399,6 +3825,7 @@ esac
 ```
 
 **Apply in workers via pre-output filtering:**
+
 ```typescript
 // Before any worker sees an MCP/tool output:
 const filtered = await adaptiveFilter.filter(type, output);
@@ -3409,6 +3836,7 @@ if (filtered.action === "filter") {
 ```
 
 **Replace:**
+
 ```
 OLD (LM): "Analyze this error and decide what to do" (~3000 tokens, 2-4s)
 NEW (Filter): Regex-based adaptive filter (0 tokens, <100ms)
@@ -3556,7 +3984,6 @@ cp optimized.md mastra-herdr-architecture.md
 # 4. Verify functionality unchanged
 node scripts/verify-functionality.mjs --config optimized.md --checks all
 ```
-
 
 ## 28. Prompt Optimization & Skill Compression
 
@@ -3844,7 +4271,6 @@ fast_mode:
 | Security audit | Full Mode | Quality critical |
 | Deployment | Fast Mode | Skip review, use CI for validation |
 
-
 ## 30. Cache-Aware Orchestration (AgentCache Pattern)
 
 Share cached prefixes across workers and reuse context to maximize LLM cache hits.
@@ -4015,6 +4441,7 @@ function dispatchWorker(worker: WorkerType, task: Task): Promise<void> {
 ### 30.5. Shared Prefix Optimization
 
 The shared prefix should be:
+
 1. **Stable** — Never change between runs (cache hit depends on exact match)
 2. **Compact** — Minimize tokens while retaining clarity
 3. **Relevant** — Include only what all workers need
@@ -4035,7 +4462,6 @@ The shared prefix should be:
 [WORKERS] implementer (writes code), reviewer (reviews code), validator (tests).
 [FLOW] implementer→reviewer→validator (sequential approval).
 ```
-
 
 ## 31. SupervisorAgent Implementation
 
@@ -4298,7 +4724,6 @@ supervisor:
     false_positive_threshold: 0.01  # Target: <1% FP rate
 ```
 
-
 ## 32. MCP→CLI Replacement Catalog
 
 Complete catalog of MCP servers that can be replaced with direct CLI commands (0 token overhead).
@@ -4440,7 +4865,6 @@ async function smartToolCall(toolName: string, args: object): Promise<string> {
 // Performance: CLI ~90% of the time, MCP ~8%, fallback ~2%
 // Token savings: ~85% of MCP calls become CLI calls → ~24,000 tokens saved
 ```
-
 
 ## 33. Phase-Scheduled Execution
 
@@ -4594,7 +5018,6 @@ const sequence = scheduler.schedule("bug-fix");
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-
 ## 34. Optimization Summary & Before/After Comparison
 
 Complete picture of token savings and latency improvements from all optimizations.
@@ -4727,7 +5150,6 @@ Complete picture of token savings and latency improvements from all optimization
 | P2 (later) | Phase scheduling | Medium | 55-67% on tasks |
 | P3 (later) | Fast-mode profile | High | 80% on simple tasks |
 
-
 ---
 
 **END OF ARCHITECTURE DRAFT**
@@ -4739,23 +5161,27 @@ Step-by-step guide to implement all optimizations.
 ### 35.1. Implementation Checklist
 
 **Phase 1: Quick Wins (Do Today — 0 Functionality Lost)**
+
 - [ ] Replace common MCPs with CLI tools (scripts/mcp-replacements.sh)
 - [ ] Add deterministic task router (scripts/task-router.sh)
 - [ ] Create worker profile definitions (src/mastra/workers/profiles.ts)
 - [ ] Verify CLI tools installed: gh, git, ast-grep, jq, curl, docker
 
 **Phase 2: Medium Complexity (Do This Week)**
+
 - [ ] Implement shared prefix structure (src/mastra/prefixes/)
 - [ ] Create worker skill files (skills/worker/base.md)
 - [ ] Implement adaptive filter (src/mastra/filter/adaptive.ts)
 - [ ] Implement phase scheduler (src/mastra/phases/scheduler.ts)
 
 **Phase 3: Advanced (Do Next Week)**
+
 - [ ] Implement cache-aware dispatch (src/mastra/cache/key.ts)
 - [ ] Create fast-mode profile (.mastra/config-fast.yaml)
 - [ ] Implement prompt compression (src/mastra/prompts/compress.ts)
 
 **Phase 4: Validate & Tune (After Implementation)**
+
 - [ ] Run benchmark suite (scripts/benchmark-tokens.mjs)
 - [ ] Monitor cache hit rates (>60% shared prefix target)
 - [ ] Tune adaptive filter thresholds (<1% false positive target)
@@ -4786,7 +5212,6 @@ node scripts/benchmark-tokens.mjs --baseline original.md --optimized optimized.m
 | Error rate | 5% | 2% | -60% (adaptive filter) |
 | Cache hit rate | ~20% | ~65% | +225% |
 | Token cost ($/100 tasks) | ~$50 | ~$8 | -84% |
-
 
 ## 36. Mastra-Specific Optimization Patterns
 
@@ -4948,7 +5373,6 @@ const processorChain = new Processors({
 | CostGuardProcessor | Truncate on budget exceed | 100% of overflow |
 | Processors | Auto-compress input/output | 30-50% |
 | ResponseCache | TTL-based caching | 100% on hit |
-
 
 ## 37. Worker Prompt Templates
 
@@ -5112,7 +5536,6 @@ JSON. {status:"healthy"|"degraded"|"critical",metrics:{latency_ms:number,token_u
 | Monitor | 1,500 tok | 200 tok | -87% |
 | **TOTAL** | **16,000 tok** | **1,900 tok** | **-88%** |
 
-
 ## 38. Configuration Optimization
 
 Optimize Mastra configuration for minimal token usage and maximum performance.
@@ -5271,7 +5694,6 @@ export default mastra;
 | Cache TTL | 0 (off) | 24h | 100% savings on repeats |
 | Processors | None | input+output+error | 30-50% auto-compression |
 | Timeout | Unlimited | 300s | Prevents token waste on hung calls |
-
 
 ## 39. Error Handling & Security Optimization
 
@@ -5489,7 +5911,6 @@ security:
     remove_internal_paths: true
 ```
 
-
 ## 40. Testing & Validation Optimization
 
 Optimize test-related operations for token efficiency.
@@ -5592,7 +6013,6 @@ test_optimization:
 | Test selection | 1,000 | 0 | -100% |
 | **TOTAL** | **7,500** | **200** | **-97%** |
 
-
 ## 41. Final Optimization Summary
 
 Complete before/after comparison and implementation roadmap.
@@ -5679,4 +6099,3 @@ For immediate impact without full implementation:
 5. **Test operations are 97% token-free** (all CLI-based)
 6. **Combined: 96% token reduction, 80% latency reduction, same or better quality**
 7. **Quick wins deliver 70%+ savings** with minimal implementation effort
-
