@@ -4442,6 +4442,159 @@ async function smartToolCall(toolName: string, args: object): Promise<string> {
 ```
 
 
+## 33. Phase-Scheduled Execution
+
+Optimize by scheduling phases to minimize redundant context and token waste.
+
+### 33.1. Phase Scheduling Concept
+
+Instead of having every worker carry full context, schedule phases to minimize overlap:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    PHASE SCHEDULE                                │
+│                                                                 │
+│  Phase 1: Planning (Researcher + Planner)                       │
+│  ── Context: Task + Project structure only                      │
+│  ── Output: Task graph + strategy                               │
+│  ── Tokens: ~1,000 (shared context, no implementation details)  │
+│                                                                 │
+│  Phase 2: Implementation (Implementer only)                     │
+│  ── Context: Task graph + strategy + code patterns              │
+│  ── Output: Code files + tests                                  │
+│  ── Tokens: ~2,000 (no research context, no review context)     │
+│                                                                 │
+│  Phase 3: Review (Reviewer only)                                │
+│  ── Context: Code files + review angles                         │
+│  ── Output: Review report                                       │
+│  ── Tokens: ~1,500 (no planning context, no research context)   │
+│                                                                 │
+│  Phase 4: Validation (Validator only)                           │
+│  ── Context: Code files + test requirements                     │
+│  ── Output: Test results                                        │
+│  ── Tokens: ~1,000 (no research/planning context)               │
+│                                                                 │
+│  OLD (all workers carry all context): 16,000 tokens             │
+│  NEW (phase-scheduled): 5,500 tokens                            │
+│  SAVINGS: 66%                                                    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 33.2. Phase Scheduling Rules
+
+| Rule | Description | Impact |
+|------|-------------|--------|
+| **No cross-phase context** | Each phase only sees its needed context | 50% context reduction |
+| **Sequential, not parallel** | Phases run in order, not all at once | 70% context reduction |
+| **Context handoff** | Phase N passes output to Phase N+1 | Clean handoff, no duplication |
+| **Skip unused phases** | If not needed, skip entirely | 30%+ reduction for simple tasks |
+| **Reuse previous context** | Phase N+1 can reference Phase N output | No re-processing |
+
+### 33.3. Phase Execution Flow
+
+```typescript
+interface PhaseScheduler {
+  // Schedule phases based on task type
+  schedule(taskType: string): PhaseSequence;
+  
+  // Execute phases sequentially
+  execute(sequence: PhaseSequence): PhaseResults;
+  
+  // Pass context between phases
+  handoff(from: Phase, to: Phase): ContextTransfer;
+}
+
+interface PhaseSequence {
+  phases: Phase[];
+  skipIf?: Record<string, boolean>;  // Skip phase if condition met
+}
+
+interface Phase {
+  id: string;           // "planning", "implementation", "review", "validation"
+  workers: string[];    // ["researcher", "planner"]
+  context: string[];    // What context this phase needs
+  output: string;       // What output this phase produces
+}
+
+// Example: Simple bug fix
+const scheduler = new PhaseScheduler();
+const sequence = scheduler.schedule("bug-fix");
+// → phases: ["planning", "implementation", "validation"]
+// → review phase skipped (simple change)
+
+// Phase 1: Planning (Researcher + Planner)
+// Context: Task description, bug report
+// Output: Fix strategy, affected files
+
+// Phase 2: Implementation (Implementer)
+// Context: Strategy, affected files
+// Output: Fixed code, tests
+
+// Phase 3: Validation (Validator)
+// Context: Fixed code, tests
+// Output: Pass/fail
+```
+
+### 33.4. Phase Context Transfer
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    CONTEXT HANDOFF PIPELINE                        │
+│                                                                  │
+│  Phase 1 Output ──▶ Phase 2 Input                               │
+│  [task-graph]        [task-graph]                                │
+│  [strategy]          [strategy]                                  │
+│  [affected-files]    [affected-files]                           │
+│                                                          ───▶  │
+│                                                          ───▶  │
+│  Phase 2 Output ──▶ Phase 3 Input                               │
+│  [code-files]        [code-files]                                │
+│  [test-results]      [test-results]                             │
+│                                                          ───▶  │
+│                                                          ───▶  │
+│  Phase 3 Output ──▶ Phase 4 Input                               │
+│  [test-plan]         [test-plan]                                │
+│  [edge-cases]        [edge-cases]                              │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### 33.5. Phase Skip Rules
+
+| Condition | Phase Skipped | Reason |
+|-----------|---------------|--------|
+| Simple query (no code) | Implementation, Validation | Just return answer |
+| One-line change | Review, Validation | Trivial, auto-approve |
+| Documentation update | Implementation | No code changed |
+| Test-only change | Review | Only tests affected |
+| Config change | Review | Config reviewed by config tool |
+
+### 33.6. Phase-Scheduled Metrics
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    PHASE SCHEDULING IMPACT                         │
+│                                                                  │
+│  Task: Simple bug fix (1-line change)                            │
+│  ──────────────────────────────────                               │
+│  OLD: 5 workers × 1,500 tok = 7,500 tok                        │
+│  NEW: 2 workers × 1,000 tok = 2,000 tok (67% savings)          │
+│                                                                  │
+│  Task: Medium feature (implement + review + validate)            │
+│  ──────────────────────────────────                               │
+│  OLD: 5 workers × 2,000 tok = 10,000 tok                       │
+│  NEW: 3 phases × 1,500 tok = 4,500 tok (55% savings)           │
+│                                                                  │
+│  Task: Complex feature (research + implement + review + validate)│
+│  ──────────────────────────────────                               │
+│  OLD: 7 workers × 2,500 tok = 17,500 tok                       │
+│  NEW: 4 phases × 2,000 tok = 8,000 tok (54% savings)           │
+│                                                                  │
+│  AVERAGE: 55-67% token reduction                                │
+│  Latency: 30-50% faster (sequential, no parallel overhead)     │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+
 ---
 
 **END OF ARCHITECTURE DRAFT**
