@@ -9,3 +9,5 @@ run	commit	metric	value	memory_gb	status	description
 7	4f005be	lines	2197	0	keep	added testing & validation strategy (§20): pyramid, unit/integration/system tests, quality gates, test commands
 8	8287258	lines	2412	0	keep	added configuration system (§21): 5-level hierarchy, YAML config, profiles, secrets, validation
 9	0e7cc79	lines	2651	0	keep	deepened §4 Worker Agent Definitions: role specifications, lifecycle, decisions, quality criteria for all 7 roles
+10	0e7cc79	lines	2781	0	keep	deepened §12 Observability: dashboard, event schema, metrics pipeline, alert rules, commands
+11	c36d427	lines	2917	0	keep	deepened §8 Data Flow: lifecycle stages, state machine, detailed data flow (input→planning, research→implementation, implementation→review, review→validation)

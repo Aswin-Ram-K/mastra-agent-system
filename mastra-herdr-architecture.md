@@ -1269,6 +1269,142 @@ mastra-agent-system/
 
 ---
 
+
+### 8.1. Request Lifecycle Stages
+
+| Stage | Step | Duration | Actor | Output |
+|-------|------|----------|-------|--------|
+| **1. Input** | User sends task | Instant | User | Task description |
+| **2. Planning** | AgentController mode: plan | 1-5s | Orchestrator | Subtask decomposition |
+| **3. Research** | AgentController mode: research | 5-30s | Researcher | Findings, sources |
+| **4. Task Assignment** | PlanDB task creation | <1s | Orchestrator | Task graph |
+| **5. Implementation** | AgentController mode: implement | 10-120s | Implementer | Code changes |
+| **6. Review** | AgentController mode: review | 5-30s | Reviewer | Review report |
+| **7. Validation** | AgentController mode: validate | 5-30s | Validator | Pass/fail |
+| **8. Synthesis** | Result aggregation | 1-5s | Orchestrator | Final response |
+| **9. Delivery** | Response to user | <1s | Orchestrator | User output |
+
+### 8.2. State Transitions
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    STATE MACHINE                                │
+│                                                                  │
+│  INPUT ──▶ PLANNING ──▶ RESEARCH ──▶ IMPLEMENT ──▶ REVIEW     │
+│    │          │           │            │           │            │
+│    │          │           │            │           │            │
+│    ▼          ▼           ▼            ▼           ▼            │
+│  ERROR      SKIP        SKIP         SKIP       SKIP            │
+│  (re-input) (task done) (no research │ (no review │ (auto-pass  │
+│               required)   needed)     needed)     needed)        │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  ERROR PATH                                              │   │
+│  │                                                          │   │
+│  │  Any stage → ERROR → Orchestrator decides:               │   │
+│  │  1. Retry (same stage, fewer steps)                      │   │
+│  │  2. Skip (bypass this stage)                             │   │
+│  │  3. Escalate (ask user for help)                         │   │
+│  │  4. Abort (terminate session)                            │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  VALIDATE ──▶ SYNTHESIS ──▶ DELIVERY ──▶ COMPLETE                │
+│     │              │             │               │               │
+│     ▼              ▼             ▼               ▼               │
+│   FAIL ──▶ IMPLEMENT (iterative)  ERROR ──▶ ERROR ──▶ ABORT      │
+│                                                          (with backup) │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 8.3. Data Flow Details
+
+#### Input → Planning
+
+```typescript
+// 1. User input received
+const userInput = {
+  task: "Implement user authentication with JWT",
+  context: "Express.js project, existing auth module",
+  constraints: ["Use TypeScript", "Add tests", "Follow existing patterns"],
+};
+
+// 2. Orchestrator analyzes input and creates PlanDB tasks
+const tasks = [
+  { id: "T1", name: "Research existing auth", deps: [], kind: "research" },
+  { id: "T2", name: "Create auth controller", deps: ["T1"], kind: "implement" },
+  { id: "T3", name: "Set up JWT middleware", deps: ["T1"], kind: "implement" },
+  { id: "T4", name: "Review auth changes", deps: ["T2", "T3"], kind: "review" },
+  { id: "T5", name: "Validate auth tests", deps: ["T4"], kind: "validate" },
+];
+
+// 3. PlanDB stores tasks with dependencies
+await plandb.batchAdd(tasks);
+await plandb.createDependencies(tasks);
+```
+
+#### Research → Implementation
+
+```typescript
+// 1. Researcher outputs findings
+const researchOutput = {
+  sources: [
+    { name: "project/auth.ts", type: "existing_code", quality: 0.9 },
+    { name: "express-jwt-docs", type: "documentation", quality: 0.8 },
+  ],
+  findings: [
+    "Project uses Express with TypeScript middleware pattern",
+    "Existing auth module has user model but no token handling",
+    "Recommended: use jsonwebtoken with refresh token pattern",
+  ],
+  gapAnalysis: {
+    present: ["user model", "validation", "error handling"],
+    missing: ["JWT generation", "token refresh", "logout"],
+    questions: ["What token expiry?", "Should we use HTTP-only cookies?"],
+  },
+};
+```
+
+#### Implementation → Review
+
+```typescript
+// 1. Implementer outputs code changes
+const implementationOutput = {
+  filesChanged: [
+    { path: "src/routes/auth.ts", change: "modified", lines: "+45 -3" },
+    { path: "src/middleware/jwt.ts", change: "created", lines: "+67" },
+    { path: "src/controllers/user.ts", change: "modified", lines: "+23 -5" },
+  ],
+  testsRun: ["npm test -- auth", "npm test -- user"],
+  testsPassed: true,
+  decisions: [
+    "Used HTTP-only cookies for tokens (more secure)",
+    "30min access tokens, 7day refresh tokens",
+    "Follows existing middleware pattern",
+  ],
+  notes: "Added refresh token rotation for security",
+};
+```
+
+#### Review → Validation
+
+```typescript
+// 1. Reviewer outputs review report
+const reviewOutput = {
+  issues: [
+    { severity: "critical", category: "tests", message: "Missing logout test" },
+    { severity: "high", category: "security", message: "No token rotation in logout" },
+    { severity: "medium", category: "readability", message: "Complex JWT middleware" },
+  ],
+  overall: { pass: false, score: 0.75, summary: "Good implementation, needs logout flow" },
+  suggestions: [
+    "Add logout endpoint that invalidates refresh tokens",
+    "Simplify JWT middleware by extracting token validation",
+    "Add integration test for full auth flow",
+  ],
+};
+```
+
+
 ## 9. Error Handling & Recovery
 
 | Scenario | Detection | Recovery |
@@ -1342,6 +1478,136 @@ const PROVIDER_CONFIG = {
 | Memory health (obs/ref tokens) | Herdr pane report-agent | Monitor, User (sidebar) |
 | Wiki status | GROOM cron/status | Monitor, User |
 | Task progress | PlanDB task states | Monitor, User |
+
+### 12.1. Observability Dashboard (Herdr Monitor Pane)
+
+```bash
+# Real-time dashboard shown in the monitor pane:
+
+# ── Agent Status Overview ─────────────────────────────────
+# [2024-01-15 14:30:00] Session: 2m 15s | Tokens: 45k | Cost: $0.03
+#
+# Orchestrator  [██████░░░░]  working  |  12 steps | 15,234 tok  | 2.3s avg
+# Researcher    [█████████░]  done     |   8 steps |  8,456 tok  | 1.8s avg
+# Planner       [██████████]  done     |   5 steps |  6,789 tok  | 1.2s avg
+# Implementer   [██████░░░░]  working  |   3 steps |  4,567 tok  | 3.1s avg
+# Reviewer      [░░░░░░░░░░]  idle     |   0 steps |      0 tok  | -
+# Validator     [░░░░░░░░░░]  idle     |   0 steps |      0 tok  | -
+#
+# ── Resource Health ───────────────────────────────────────
+# Memory: orchestrator  45k/120k (38%)  ✓
+# Memory: implementer   32k/ 80k (40%)  ✓
+# Memory: researcher    18k/ 80k (23%)  ✓
+# Memory: planner       12k/ 80k (15%)  ✓
+# ──────────────────────────────────────────────────────────
+# Memory: monitor       15k/ 20k (75%)  ⚠️ High
+# ──────────────────────────────────────────────────────────
+#
+# ── Task Progress ─────────────────────────────────────────
+# Task: Implement user auth
+#   ✅ [T1] Create auth controller       (researcher → implementer)
+#   ✅ [T2] Set up JWT middleware        (implementer → done)
+#   🔄 [T3] Add refresh token handler    (implementer → working)
+#   ⬜ [T4] Add logout endpoint           (planner → pending)
+#   ⬜ [T5] Add integration tests         (validator → pending)
+#
+# Progress: 2/5 tasks (40%) | ETA: ~3 min remaining
+#
+# ── Alerts ────────────────────────────────────────────────
+# ⚠️ implementer latency high (3.1s avg > 2x baseline)
+# ⚠️ monitor memory pressure (75% of threshold)
+# ──────────────────────────────────────────────────────────
+```
+
+### 12.2. Event Subscription Schema
+
+```typescript
+// Herdr event subscriptions for reactive monitoring
+interface HerdrEventSubscription {
+  type: "pane.agent_status_changed" |
+        "pane.output_matched" |
+        "pane.exited" |
+        "layout.updated" |
+        "workspace.changed";
+
+  pane_id?: string;           // "*" = all panes
+  workspace_id?: string;
+  filter?: {
+    status?: string;          // Filter by agent status
+    label?: string;           // Filter by pane label
+    output_pattern?: string;  // Filter by output regex
+  };
+
+  callback: (event: HerdrEvent) => void;
+}
+
+// Event payload
+interface HerdrEvent {
+  type: string;
+  timestamp: string;
+  data: {
+    pane_id: string;
+    workspace_id: string;
+    tab_id?: string;
+    [key: string]: any;
+  };
+}
+```
+
+### 12.3. Metrics Collection Pipeline
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                    METRICS PIPELINE                            │
+│                                                                │
+│  Sources → Collectors → Aggregators → Dashboard               │
+│                                                                │
+│  Source:                          Aggregator:                  │
+│  • Herdr events                   • Moving averages            │
+│  • Mastra thread                  • Percentiles (p50/p95/p99)  │
+│  • Background tasks               • Trend detection           │
+│  • Token usage                    • Alert thresholds          │
+│  • Cost tracking                  • Correlation analysis      │
+│                                                                │
+│  Collector (5s interval):       Dashboard (real-time):        │
+│  • Poll Herdr for agent states  • Agent status bars           │
+│  • Read Mastra for token usage  • Token/cost gauges          │
+│  • Parse background task stream • Task progress ring          │
+│  • Check memory health          • Memory health bars          │
+│  • Validate wiki canaries       • Canary status indicators   │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### 12.4. Alert Rules
+
+| Alert | Trigger | Severity | Action |
+|-------|---------|----------|--------|
+| **Worker down** | Pane exits unexpectedly | Critical | Auto-restart worker |
+| **High latency** | Agent latency > 2x baseline | Warning | Log warning, suggest context reduction |
+| **Memory pressure** | Memory > 75% threshold | Warning | Log warning, suggest flush |
+| **Cost approaching** | Cost > 80% of limit | Warning | Alert user, suggest optimization |
+| **Cost limit** | Cost > 100% of limit | Critical | Block new tool calls |
+| **Task timeout** | Task exceeds timeoutMs | Warning | Kill task, log error |
+| **Handoff failure** | 3+ handoff nacks in 5 min | Error | Log error, suggest protocol fix |
+| **Wiki corruption** | GROOM canary fails | Critical | Auto-revert wiki change |
+| **PlanDB error** | SQLite integrity failure | Critical | Rebuild PlanDB, alert user |
+
+### 12.5. Observability Commands
+
+```bash
+# Dashboard control
+/obs dashboard                Show full observability dashboard
+/obs agents                   Show agent status only
+/obs resources                Show resource health
+/obs tasks                    Show task progress
+/obs alerts                   Show active alerts
+/obs history <n>              Show last N events
+/obs export <file>            Export observability data
+/obs config <key> <value>     Configure observability settings
+/obs thresholds set <rule> <value>  Set alert threshold
+```
+
+
 
 ---
 
