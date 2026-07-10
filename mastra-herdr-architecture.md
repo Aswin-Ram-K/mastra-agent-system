@@ -1096,6 +1096,127 @@ const mastraMcpServer = new MCPServer({
 })
 ```
 
+### 5.3. MCP Security & Sandbox
+
+```typescript
+// MCP servers are sandboxed and permission-controlled
+interface MCPServerSecurity {
+  // Isolation
+  sandbox: {
+    enabled: true;                    // Run in isolated process
+    network: boolean;                 // Can access network?
+    filesystem: 'read' | 'write' | 'none';  // File access level
+    environment: Record<string, string>;  // Restricted env vars
+  };
+
+  // Permissions
+  permissions: {
+    read: boolean;                    // Can read files?
+    write: boolean;                   // Can write files?
+    execute: boolean;                 // Can execute commands?
+    network: boolean;                 // Can make network requests?
+  };
+
+  // Rate limiting
+  rateLimit: {
+    callsPerMinute: number;           // Max calls per minute
+    concurrentCalls: number;          // Max concurrent calls
+    timeoutMs: number;                // Call timeout
+  };
+
+  // Monitoring
+  monitoring: {
+    logCalls: boolean;                // Log all calls to audit trail
+    trackUsage: boolean;              // Track token/cost impact
+    alertOnFailure: boolean;          // Alert on server failure
+  };
+}
+
+// Apply security policy per MCP server:
+const securityPolicies = {
+  github: {
+    sandbox: { network: true, filesystem: 'read', enabled: true },
+    permissions: { read: true, write: false, execute: false, network: true },
+    rateLimit: { callsPerMinute: 60, concurrentCalls: 3, timeoutMs: 30_000 },
+  },
+  filesystem: {
+    sandbox: { network: false, filesystem: 'read', enabled: true },
+    permissions: { read: true, write: false, execute: false, network: false },
+    rateLimit: { callsPerMinute: 120, concurrentCalls: 5, timeoutMs: 5_000 },
+  },
+  wikipedia: {
+    sandbox: { network: true, filesystem: 'none', enabled: true },
+    permissions: { read: true, write: false, execute: false, network: true },
+    rateLimit: { callsPerMinute: 30, concurrentCalls: 2, timeoutMs: 10_000 },
+  },
+};
+```
+
+### 5.4. MCP Tool Auto-Discovery
+
+```bash
+# When a new MCP server is added, tools are auto-discovered:
+$ herdr mcp discover
+# Found 3 new MCP servers:
+# • security-scan (local) — 5 tools — security-audit capability
+# • code-review (smithery) — 8 tools — code review capability
+# • api-docs (remote) — 3 tools — documentation capability
+
+# Each tool is cataloged with metadata:
+$ herdr mcp tools --detail
+# Tool: security-scan.find-vulnerabilities
+#   Description: Scan code for security vulnerabilities
+#   Input: file_path (string) → vulnerabilities (array)
+#   Category: security
+#   Tags: [security, vulnerability, scan]
+#   Confidence: 0.85
+#
+# Tool: code-review.review-file
+#   Description: Review a file for code quality
+#   Input: file_path (string) → review (object)
+#   Category: review
+#   Tags: [review, quality, code]
+#   Confidence: 0.90
+```
+
+### 5.5. MCP Lifecycle Management
+
+```typescript
+// MCP server lifecycle is managed by the Orchestrator
+interface MCPLifecycle {
+  // 1. Discovery — find available servers
+  discover(): MCPDiscovery[];
+
+  // 2. Selection — choose relevant servers for the task
+  select(taskDescription: string): MCPSelection[];
+
+  // 3. Connection — connect to selected servers
+  connect(servers: MCPSelection[]): MCPConnectionResult[];
+
+  // 4. Tool Resolution — make tools available to agents
+  resolveTools(connections: MCPConnectionResult[]): ToolDefinition[];
+
+  // 5. Execution — route tool calls through MCP
+  execute(toolCall: ToolCall): ToolResult;
+
+  // 6. Cleanup — disconnect when done
+  disconnect(): void;
+}
+
+// Tool resolution example:
+// Task: "Implement user auth with security checks"
+// → Selected MCPs: github, code-explorer, security-scan
+// → Available tools:
+//    - github.search (search repo)
+//    - github.read (read file)
+//    - code-explorer.search (AST search)
+//    - code-explorer.read (read symbol)
+//    - security-scan.find-vulnerabilities (scan for vulns)
+//    - security-scan.audit-dependencies (check deps)
+```
+
+
+
 ---
 
 ## 6. Library Registry Structure
