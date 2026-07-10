@@ -1,2 +1,3 @@
 baseline	327e5fe	lines	3183	0	discard	original architecture: 3183 lines, LM-heavy decisions, MCP-blob context, no caching
 1	7467fa4	lines	3563	0	keep	§26 Deterministic Orchestration: CLI task router, profile-based tools, LLM-free adaptive filter, AgentCache prefixes, MCP→CLI replacement, command sequences. §27 implementation priority.
+2	156df34	lines	3850	0	keep	§28 Prompt Optimization: skill-based modular prompts, auto-load rules, emoji compression, 872	156df34	lines	3850	0	keep	§28 Prompt Optimization: skill-based modular prompts, auto-load rules, emoji compression, 87% reduction. §29 Fast-Mode profile (3 speed tiers).
