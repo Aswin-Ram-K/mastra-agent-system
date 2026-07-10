@@ -3845,6 +3845,198 @@ fast_mode:
 | Deployment | Fast Mode | Skip review, use CI for validation |
 
 
+## 30. Cache-Aware Orchestration (AgentCache Pattern)
+
+Share cached prefixes across workers and reuse context to maximize LLM cache hits.
+
+### 30.1. Prefix Cache Strategy
+
+LLM caches provide ~60-80% token savings when prefixes match exactly:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    CACHE-ENABLED PROMPT STRUCTURE                  │
+│                                                                  │
+│  SHARED_PREFIX (cached, reused by ALL workers):                 │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │ [SYSTEM] You are a worker agent in a multi-agent system.  │  │
+│  │ [TASK] Implement user authentication with JWT tokens.     │  │
+│  │ [STRUCTURE] src/ auth.ts, auth.controller.ts, ...         │  │
+│  │ [CONVENTIONS] TypeScript, Express, JWT, Bcrypt.           │  │
+│  │ [FILES] See attached file list.                            │  │
+│  │ [TOOLS] Available tools: file-read, file-write, bash.     │  │
+│  │ [OUTPUT] Code only, no explanations unless asked.          │  │
+│  │ [SAFETY] Read-only by default. No rm, no curl to external. │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│  → ~600 tokens, cached (60% hit = 360 tokens saved)              │
+│                                                                  │
+│  WORKER_PREFIX (cached per worker type):                        │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │ [WORKER] You are the implementer.                           │  │
+│  │ [RULES] Use parameterized queries. Follow existing patterns.│  │
+│  │ [STYLE] 2-space indent, camelCase, error handling.          │  │
+│  │ [NEVER] Delete files without backup. Never expose keys.     │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│  → ~400 tokens, cached per worker (60% hit = 240 tokens saved)   │
+│                                                                  │
+│  WORKER_SPECIFIC (not cached, varies per worker):               │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │ [CURRENT_WORK] Read src/auth.controller.ts, add refresh.    │  │
+│  │ [TASKS] [T2] Set up JWT middleware.                          │  │
+│  │ [NOTES] Use HTTP-only cookies.                              │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│  → ~200 tokens, never cached (~200 tokens)                       │
+│                                                                  │
+│  TOTAL: 1,200 tokens                                              │
+│  With 60% cache hit: ~600 tokens (50% savings)                   │
+│  With 80% cache hit: ~480 tokens (60% savings)                   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### 30.2. Cache Key Structure
+
+```typescript
+interface CacheKey {
+  // Hash of the shared prefix — identical across all workers
+  shared: string;  // sha256 of SYSTEM + TASK + STRUCTURE + CONVENTIONS
+  
+  // Hash of the worker prefix — identical for same worker type
+  worker: string;  // sha256 of WORKER + RULES + STYLE + NEVER
+  
+  // Unique per call
+  call: string;    // sha256 of CURRENT_WORK + TASKS + NOTES
+}
+
+// Cache hit rate by prefix quality:
+const CACHE_STATISTICS = {
+  identical_prefixes: { hit_rate: 0.80, savings: '80%' },  // 100% match
+  similar_prefixes: { hit_rate: 0.60, savings: '60%' },    // ~80% match
+  different_prefixes: { hit_rate: 0.20, savings: '20%' },  // <50% match
+};
+```
+
+### 30.3. Worker-Specific Skill Files
+
+Pre-built skill files that ensure consistent prompts across runs:
+
+```markdown
+# skills/worker/implementer/base.md
+# Cache key: sha256(base.md content)
+# Reused across ALL implementer calls → 80% cache hit rate
+
+You are the IMPLEMENTER worker in a multi-agent system.
+
+## Core Rules
+1. Write TypeScript code following project conventions
+2. Use parameterized queries (no SQL injection)
+3. Validate all inputs before processing
+4. Add tests alongside code changes
+5. Follow existing patterns in the codebase
+
+## Style
+- 2-space indent, camelCase
+- Error handling: try/catch with specific error types
+- No console.log in production code
+- Comments for complex logic only
+
+## Tools
+- file-read: Read files for context
+- file-write: Modify/create files (safe mode by default)
+- bash: Run tests and commands
+- code-search: AST-aware structural search
+
+## Output
+- Code only — no explanations unless asked
+- Include test files alongside changes
+- Use existing patterns, don't invent new ones
+```
+
+```markdown
+# skills/worker/reviewer/base.md
+# Cache key: sha256(base.md content)
+# Reused across ALL reviewer calls → 80% cache hit rate
+
+You are the REVIEWER worker in a multi-agent system.
+
+## Core Rules
+1. Review for correctness, security, tests, performance
+2. Check existing code follows conventions
+3. Verify tests cover edge cases
+4. Flag potential security issues (SQLi, XSS, auth bypass)
+5. Suggest improvements, don't just list problems
+
+## Review Angles
+1. Correctness: Does it work as intended?
+2. Security: Any vulnerabilities?
+3. Tests: Adequate coverage?
+4. Performance: Any obvious issues?
+5. Readability: Clear and maintainable?
+
+## Severity
+- CRITICAL: Must fix (security, correctness)
+- HIGH: Should fix (tests, edge cases)
+- MEDIUM: Nice to fix (performance, readability)
+- LOW: Optional (style, minor improvements)
+
+## Output Format
+[SEVERITY] Category: Issue description
+Suggestion: How to fix
+Context: File:Line reference
+```
+
+### 30.4. Cache-Aware Worker Dispatch
+
+```typescript
+// When dispatching workers, structure calls to maximize cache hits:
+function dispatchWorker(worker: WorkerType, task: Task): Promise<void> {
+  // 1. Load shared prefix (always cached)
+  const sharedPrefix = loadCachedPrefix('shared'); // ~600 tokens, 80% hit
+  
+  // 2. Load worker-specific prefix (cached per worker type)
+  const workerPrefix = loadCachedPrefix(worker); // ~400 tokens, 80% hit
+  
+  // 3. Build call with worker-specific content
+  const callPrefix = `${sharedPrefix}\n${workerPrefix}`; // ~1,000 tokens
+  const workerContent = buildWorkerContent(worker, task); // ~200 tokens
+  
+  // 4. Send to LLM (1,200 tokens total, ~60% cache hit → ~720 effective)
+  await llm.complete({
+    prefix: callPrefix,  // Cached → cheap
+    content: workerContent,  // Variable → full cost
+  });
+}
+
+// Savings per worker call:
+// Without caching: 1,200 tokens
+// With 60% cache hit: ~480 tokens (60% savings)
+// With 80% cache hit: ~360 tokens (70% savings)
+```
+
+### 30.5. Shared Prefix Optimization
+
+The shared prefix should be:
+1. **Stable** — Never change between runs (cache hit depends on exact match)
+2. **Compact** — Minimize tokens while retaining clarity
+3. **Relevant** — Include only what all workers need
+4. **Structured** — Use consistent formatting for maximum cache utility
+
+```markdown
+# Ideal shared prefix (compact, stable, cacheable):
+# ~500 tokens, identical for every worker call
+
+[SYSTEM] Multi-agent orchestrator. Workers: implementer, reviewer, validator.
+[TASK] {task_description}
+[PROJECT] {project_summary}
+[FILES] {file_list}
+[TOOLS] file-read, file-write, bash, code-search (standard tools)
+[STYLE] TypeScript, Express, JWT, Bcrypt (project conventions)
+[OUTPUT] Code first, tests with changes, no explanations.
+[SAFETY] Read-only default. No rm/curl without explicit approve.
+[WORKERS] implementer (writes code), reviewer (reviews code), validator (tests).
+[FLOW] implementer→reviewer→validator (sequential approval).
+```
+
+
 ---
 
 **END OF ARCHITECTURE DRAFT**
