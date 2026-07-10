@@ -3033,6 +3033,151 @@ Results:                                            registry add
 5. Load + activate
 ```
 
+## 25. Deployment & Operations
+
+### 25.1. Deployment Modes
+
+| Mode | Environment | Use Case | Scale |
+|------|-------------|----------|-------|
+| **Local** | Single machine, vLLM on localhost | Development, testing | 1 user, 1 session |
+| **Standalone** | Docker, single server | Small team, self-hosted | 10 users, 20 sessions |
+| **Distributed** | Multiple servers, Redis pub/sub | Enterprise, multi-tenant | 100+ users, 100+ sessions |
+
+### 25.2. Local Deployment
+
+```bash
+# Prerequisites
+# - Node.js 20+
+# - vLLM running locally (optional)
+# - SQLite (built-in)
+# - Herdr installed
+
+# Clone and install
+git clone <repo>
+cd mastra-agent-system
+npm install
+
+# Configure (optional — uses defaults)
+# .mastra/config.yaml with profile: dev
+
+# Start
+npm run dev
+
+# Or use with vLLM
+# Start vLLM first: vllm serve meta-llama/Llama-3.1-8B-Instruct -p 8000
+# Then: OPENAI_COMPATIBLE_BASE_URL=http://localhost:8000/v1 npm run dev
+```
+
+### 25.3. Docker Deployment
+
+```dockerfile
+FROM node:20-slim AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+RUN npm run build
+
+FROM node:20-slim
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/.mastra ./.mastra
+COPY --from=builder /app/library ./library
+
+EXPOSE 3000
+ENV NODE_ENV=production
+CMD ["node", "dist/index.js"]
+```
+
+```bash
+docker build -t mastra-agent-system .
+docker run -d \
+  --name mastra-agent \
+  -p 3000:3000 \
+  -v $(pwd)/.mastra:/app/.mastra \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/wiki:/app/wiki \
+  -e OPENAI_COMPATIBLE_BASE_URL=http://vllm:8000/v1 \
+  mastra-agent-system
+```
+
+### 25.4. Production Checklist
+
+| Check | Item | Priority |
+|-------|------|----------|
+| **Cost guardrails** | Set `cost.perSession` limits | Critical |
+| **Prompt injection** | Enable `PromptInjectionDetector` | Critical |
+| **File safety** | Set `sandbox.fileAccess` to `read` | Critical |
+| **Herdr auth** | Enable workspace authentication | High |
+| **Backup** | Configure auto-backup for `data/` and `wiki/` | High |
+| **Monitoring** | Set up alerting for errors and timeouts | High |
+| **Plugin security** | Set `plugins.autoInstall: false` | High |
+| **Logging** | Set `logLevel: warn` or `error` | Medium |
+| **Rate limiting** | Configure MCP rate limits | Medium |
+| **Health check** | Implement `/health` endpoint | Medium |
+
+### 25.5. Operations Guide
+
+```bash
+# Common operations
+docker-compose up -d                  # Start all services
+docker-compose logs -f agent          # View agent logs
+docker-compose exec agent node -e '...'  # Run command in container
+docker-compose restart agent          # Restart agent
+docker-compose ps                     # Check container status
+
+# Health monitoring
+curl http://localhost:3000/health     # Health check
+# Expected: { "status": "ok", "agents": { "online": 7, "offline": 0 } }
+
+# Backup
+cp -r data/ wiki/ backups/session-$(date +%Y%m%d)/
+```
+
+### 25.6. Scaling Strategies
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    SCALING ARCHITECTURE                          │
+│                                                                  │
+│  Single Server:                                                │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  vLLM + Mastra + Herdr + SQLite                        │   │
+│  │  Max: 10-20 concurrent sessions                        │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  Distributed:                                                  │
+│  ┌──────────┐  Redis    ┌──────────┐  Redis    ┌──────────┐   │
+│  │  Server 1 │ ───────▶  │  Server 2 │ ───────▶  │  Server 3 │   │
+│  │  (agents) │  pub/sub  │  (agents) │  pub/sub  │ (agents) │   │
+│  └──────────┘           └──────────┘           └──────────┘   │
+│        │                      │                      │        │
+│  ┌─────▼──────┐       ┌─────▼──────┐       ┌─────▼──────┐   │
+│  │  SQLite 1  │       │  SQLite 2  │       │  SQLite 3  │   │
+│  │  + Wiki    │       │  + Wiki    │       │  + Wiki    │   │
+│  └────────────┘       └────────────┘       └────────────┘   │
+│                                                                  │
+│  Key: Redis Streams for distributed pub/sub,                    │
+│  per-server SQLite for local state,                             │
+│  shared wiki across servers (git-based sync)                    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 25.7. Maintenance Tasks
+
+| Task | Frequency | Command |
+|------|-----------|---------|
+| **Database cleanup** | Weekly | `npm run db:cleanup` |
+| **Wiki maintenance** | Daily (GROOM cron) | `npm run wiki:maintain` |
+| **Memory dump** | On demand | `npm run memory:dump` |
+| **Backup** | Daily (cron) | `npm run backup` |
+| **Plugin update check** | Weekly | `npm run plugins:update` |
+| **Config validation** | On deploy | `npm run config:validate` |
+| **Health check** | Every minute | Health endpoint |
+| **Log rotation** | Daily (system) | `journalctl --rotate` |
+
+
 ---
 
 **END OF ARCHITECTURE DRAFT**

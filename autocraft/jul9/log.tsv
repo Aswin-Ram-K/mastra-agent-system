@@ -12,3 +12,4 @@ run	commit	metric	value	memory_gb	status	description
 10	0e7cc79	lines	2781	0	keep	deepened §12 Observability: dashboard, event schema, metrics pipeline, alert rules, commands
 11	c36d427	lines	2917	0	keep	deepened §8 Data Flow: lifecycle stages, state machine, detailed data flow (input→planning, research→implementation, implementation→review, review→validation)
 12	327e5fe	lines	3038	0	keep	deepened §5 MCP Integration: security/sandbox, auto-discovery, lifecycle management, rate limiting
+13	2599c8b	lines	3183	0	keep	added §25 Deployment & Operations: 3 deployment modes, local/Docker guides, production checklist, ops, scaling, maintenance
